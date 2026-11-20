@@ -1,4 +1,4 @@
-// GET /api/explorer/<blockscout v2 path>?<query> — a read-only, cached proxy for the Celo Blockscout API.
+// GET /api/explorer/<blockscout v2 path>?<query> â€” a read-only, cached proxy for the Celo Blockscout API.
 // Phones call our own origin (answered from Vercel's edge cache in milliseconds) instead of each hitting the
 // rate-limited explorer. Only public read endpoints are allowed; nothing here can move funds.
 const UPSTREAM = "https://celo.blockscout.com/api/v2";
@@ -12,7 +12,7 @@ const ALLOWED = [
 ];
 
 export function upstreamUrl(segments, query) {
-  const parts = [].concat(segments ?? []).filter(Boolean);
+  const parts = [].concat(segments ?? []).flatMap((s) => String(s).split("/")).filter(Boolean);
   if (!parts.length || !parts.every((p) => SEGMENT.test(p))) return null;
   const path = parts.join("/");
   if (!ALLOWED.some((re) => re.test(path))) return null;
@@ -33,7 +33,7 @@ export default async function handler(req, res) {
     res.setHeader("Allow", "GET, HEAD");
     return res.status(405).json({ error: "Method not allowed" });
   }
-  const url = upstreamUrl(req.query?.path ?? req.query?.["...path"], req.query);
+  const url = upstreamUrl(req.query?.path, req.query);
   if (!url) return res.status(400).json({ error: "Not an allowed explorer path" });
   try {
     const c = new AbortController();

@@ -1,7 +1,7 @@
 // The Vercel explorer proxy must only forward public read endpoints, and the API must reject other methods.
 import test from "node:test";
 import assert from "node:assert/strict";
-import handler, { upstreamUrl } from "../api/explorer/[...path].js";
+import handler, { upstreamUrl } from "../api/explorer.js";
 
 const A = "0x8a695cf54CB44753c8b784EB36d266f748617a1e";
 
@@ -26,4 +26,8 @@ test("explorer proxy: non-GET is 405 and a bad path is 400", async () => {
   const mk = () => { const r = { code: 0, headers: {}, body: null }; r.status = (c) => { r.code = c; return r; }; r.json = (b) => { r.body = b; return r; }; r.send = (b) => { r.body = b; return r; }; r.setHeader = (k, v) => { r.headers[k] = v; }; return r; };
   const r1 = mk(); await handler({ method: "POST", query: {} }, r1); assert.equal(r1.code, 405);
   const r2 = mk(); await handler({ method: "GET", query: { path: ["stats"] } }, r2); assert.equal(r2.code, 400);
+});
+
+test("explorer proxy: a rewritten single path string is split into segments", () => {
+  assert.equal(upstreamUrl("addresses/0x8a695cf54CB44753c8b784EB36d266f748617a1e/transactions", { path: "x", filter: "from" }), "https://celo.blockscout.com/api/v2/addresses/0x8a695cf54CB44753c8b784EB36d266f748617a1e/transactions?filter=from");
 });

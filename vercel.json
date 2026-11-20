@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "installCommand": "npm ci --ignore-scripts",
@@ -7,6 +7,9 @@
   "functions": {
     "api/**/*.js": { "maxDuration": 15 }
   },
+  "rewrites": [
+    { "source": "/api/explorer/:path*", "destination": "/api/explorer?path=:path*" }
+  ],
   "headers": [
     {
       "source": "/(.*)",
