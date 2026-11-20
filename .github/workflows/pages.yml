@@ -1,7 +1,8 @@
 name: live-page
 
-# Publishes site/ to GitHub Pages. Re-runs every 30 minutes only to refresh the Textile FX rate
-# (read-only). It sends no transactions and uses no secrets.
+# Publishes site/ to GitHub Pages. On push it deploys only after the tests and the site check pass.
+# The 30-minute schedule only refreshes the Textile FX rate (read-only): it sends no transactions
+# and uses no secrets.
 on:
   push:
     branches: [main]
@@ -17,14 +18,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - run: node scripts/fetch-rate.mjs site/rate.json
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: node scripts/check-site.mjs
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Refresh the Textile FX rate (read-only)
+        run: node scripts/fetch-rate.mjs site/rate.json
+      # A Textile outage must not block deploys: the site shows "rate unavailable" on its own.
+      - name: Warn if no rate could be produced
+        run: |
+          node -e "const r=require('./site/rate.json'); if(!(r.effectiveRate>0||r.ticker)) console.log('::warning::No Textile rate this run - ' + JSON.stringify(r.errors||[]))"
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site
@@ -32,6 +53,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       pages: write
       id-token: write

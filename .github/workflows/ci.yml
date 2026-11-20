@@ -1,0 +1,34 @@
+name: ci
+
+# Runs on every push and pull request: unit tests (safety rules, tagging, request matching,
+# the site's ABI codec against viem), a syntax check of every script, and the static site check.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Unit tests
+        run: npm test
+      - name: Syntax check (agent + scripts)
+        run: for f in src/*.mjs scripts/*.mjs; do node --check "$f"; done
+      - name: Site check (links, assets, CSP, scripts)
+        run: node scripts/check-site.mjs
