@@ -1,0 +1,17 @@
+{
+  "name": "celo-naira-payout-agent",
+  "version": "0.1.0",
+  "description": "Agent that pays out in cNGN on Celo via Textile FX",
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/agent.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@celo/attribution-tags": "0.5.0",
+    "viem": "2.58.2"
+  }
+}
