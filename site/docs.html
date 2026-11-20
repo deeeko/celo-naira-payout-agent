@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://forno.celo.org https://celo.blockscout.com; style-src 'self' 'unsafe-inline' https://api.fontshare.com; font-src https://cdn.fontshare.com; img-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Docs · Naira Payout</title>
+<meta name="description" content="How the Naira Payout agent quotes, converts and pays out, the safeguards it enforces in code, and how to run it from the command line.">
+<meta name="theme-color" content="#040806">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Naira Payout Agent">
+<meta property="og:description" content="Send dollars. They receive naira. Converts on Textile FX and pays out on Celo.">
+<meta property="og:image" content="https://deeeko.github.io/celo-naira-payout-agent/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="logo.png">
+<link rel="apple-touch-icon" href="logo.png">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=general-sans@300,400,500,600&f[]=sentient@500i&display=swap">
+<link rel="stylesheet" href="assets/styles.css">
+<style>
+  .docs-aside { position: sticky; top: 96px; }
+  .toc { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  .toc a { display: block; padding: 8px 12px; border-radius: var(--r-sm); color: var(--text-2); font-size: var(--fs-small); font-weight: 500; transition: background-color 120ms ease, color 120ms ease; }
+  .toc a:hover { background: var(--surface-2); color: var(--text); }
+  .toc a[aria-current="true"] { background: var(--surface-3); color: var(--text); }
+  .docs-main .card-b > p + p, .docs-main .card-b > p + .alert, .docs-main .card-b > .alert + p { margin-top: 14px; }
+  .docs-main .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 22px; }
+  .docs-main .table td.lead-cell code.inline { white-space: normal; }
+  #config td.lead-cell code.inline { white-space: nowrap; }
+  .docs-main .table .nw, .docs-main .table .badge code.inline { white-space: nowrap; }
+  #cli td.lead-cell { min-width: 240px; }
+  .addr { overflow-wrap: anywhere; }
+  .qs { width: 100%; min-width: 0; gap: 10px; grid-template-columns: minmax(0, 1fr); }
+  .addr-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  @media (max-width: 960px) {
+    .docs-aside { position: static; order: -1; }
+  }
+  @media (max-width: 640px) {
+    .docs-main .steps { grid-template-columns: minmax(0, 1fr); }
+    .addr-cell { justify-content: flex-end; text-align: right; }
+    #cli td.lead-cell { min-width: 0; }
+    .docs-main .table td::before { flex: none; white-space: nowrap; }
+    .docs-main .table td > :last-child { min-width: 0; text-align: right; overflow-wrap: anywhere; }
+    .docs-main .table td.lead-cell > :last-child { text-align: left; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+</svg>
+<div class="sky sky-sm" aria-hidden="true"></div>
+<div class="nav-wrap">
+  <nav class="nav" aria-label="Main">
+    <a class="nav-brand" href="index.html"><img src="logo.png" alt="" width="30" height="30"><span>Naira Payout</span></a>
+    <div class="nav-links">
+      <a href="index.html">Overview</a>
+      <a href="quote.html">Quote</a>
+      <a href="transactions.html">Transactions</a>
+      <a href="agent.html">Agent</a>
+      <a href="verify.html">Verify</a>
+      <a href="docs.html">Docs</a>
+    </div>
+    <a class="btn btn-secondary btn-sm" href="https://github.com/deeeko/celo-naira-payout-agent">GitHub</a>
+    <button class="icon-btn menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu"><svg class="i"><use href="#i-menu"/></svg></button>
+    <div class="mobile-menu" id="mobile-menu" data-open="false">
+      <a href="index.html">Overview</a>
+      <a href="quote.html">Quote</a>
+      <a href="transactions.html">Transactions</a>
+      <a href="agent.html">Agent</a>
+      <a href="verify.html">Verify</a>
+      <a href="docs.html">Docs</a>
+    </div>
+  </nav>
+</div>
+<main>
+  <header class="page-head container">
+    <span class="eyebrow">Docs</span>
+    <h1 class="page-title">How it <em>works</em></h1>
+    <p class="lead">What the agent does, the rules it enforces in code, and how to run it yourself.</p>
+  </header>
+
+  <div class="container grid-main">
+    <div class="stack docs-main">
+
+      <section class="card" id="overview" aria-labelledby="overview-h">
+        <div class="card-h"><h2 id="overview-h">Overview</h2></div>
+        <div class="card-b">
+          <p class="soft">Naira Payout is a command-line agent on Celo mainnet. It takes USD₮, converts it to cNGN (a naira stablecoin) through Textile FX, and sends the cNGN to a recipient you have approved in advance.</p>
+          <p class="soft">It is for people who hold dollars and need to pay someone in Nigeria in naira. The recipient gets cNGN in their Celo wallet and can redeem it for naira, for example through cngn.co.</p>
+          <p class="soft">Onchain: the agent's ERC-8004 identity (agent #10079), and every transaction it sends during a payout: the USD₮ approval (and an allowance reset, if one is needed), the swap and the cNGN transfer. Each one carries the attribution tag <code class="inline" translate="no">celo_7360953d1b53</code>. Off chain: the Textile price quote, your contacts file, the agent's key file and a local receipts log.</p>
+          <div class="alert mt-16"><svg class="i"><use href="#i-info"/></svg><span>This website is read-only. It shows live prices and onchain data but cannot move money. Payouts are run by the agent's owner from the command line.</span></div>
+        </div>
+      </section>
+
+      <section class="card" id="flow" aria-labelledby="flow-h">
+        <div class="card-h"><h2 id="flow-h">How a payout runs</h2><span class="muted small"><code class="inline" translate="no">src/pay.mjs</code></span></div>
+        <div class="card-b">
+          <ol class="steps">
+            <li><h3>Quote</h3><p>Checks the amount against the cap and the recipient against the allow-list, then asks Textile FX for a free preview. A dry run stops here. With <code class="inline" translate="no">--execute</code> it checks the wallet holds enough USD₮ and about 0.02 CELO for gas, asks you to confirm, then requests a firm quote.</p></li>
+            <li><h3>Convert</h3><p>If the current allowance is too low, approves exactly the amount the firm quote needs (resetting an old allowance to zero first), then broadcasts Textile's swap transaction. An expired quote is never sent.</p></li>
+            <li><h3>Pay</h3><p>Reads the agent's cNGN balance before and after the swap, and transfers exactly that difference to the recipient. No estimate is used.</p></li>
+            <li><h3>Check</h3><p>Reads every transaction it sent back from the chain (reset, approval, swap, payout), flags any that is missing the tag, and exits with an error if one is. It prints Celoscan links and appends a line to <code class="inline" translate="no">receipts.jsonl</code>.</p></li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="card" id="safeguards" aria-labelledby="safe-h">
+        <div class="card-h"><h2 id="safe-h">Safeguards</h2><span class="muted small">Enforced in <code class="inline" translate="no">src/guards.mjs</code></span></div>
+        <div class="card-b">
+          <ul class="checks">
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Dry run by default.</b> Nothing is sent without <code class="inline" translate="no">--execute</code>, and then it waits for you to type “yes” (or pass <code class="inline" translate="no">--yes</code>).</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>$25 per payout.</b> Larger amounts are refused before any quote is requested. The cap is set by <code class="inline" translate="no">MAX_USD</code>.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Approved recipients only.</b> Payees must be named in the contacts file. The agent's own address, the owner's <code class="inline" translate="no">own_wallets</code>, the token and registry contracts and the zero address are blocked.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Price protection.</b> The firm quote may be at most 3% worse than the preview (<code class="inline" translate="no">MAX_SLIPPAGE_BPS</code>). Expired quotes are never sent.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Pays what it received.</b> The payout is the measured change in the agent's cNGN balance, not an assumed amount.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Key stays local.</b> The private key lives in a file outside the repo and is never printed.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>AI cannot override limits.</b> The optional AI only maps a request to a contact name and an amount. Code applies every rule above.</span></li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="card" id="cli" aria-labelledby="cli-h">
+        <div class="card-h"><h2 id="cli-h">Command line</h2><span class="muted small"><code class="inline" translate="no">node src/agent.mjs</code></span></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th scope="col">Command</th><th scope="col">What it does</th><th scope="col">Sends transactions</th></tr></thead>
+            <tbody>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">keygen</code></td><td data-label="What it does"><span>Creates the agent wallet key file. Never overwrites an existing key and never prints it.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">status</code></td><td data-label="What it does"><span>Shows the agent's CELO, USD₮ and cNGN balances, the tag and the cap.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">quote --amount 10</code></td><td data-label="What it does"><span>Gets a free Textile FX preview for the amount. No wallet needed.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">pay <span class="nw">--to ada</span> <span class="nw">--amount 10</span> <span class="nw">[--execute]</span> <span class="nw">[--yes]</span></code></td><td data-label="What it does"><span>Runs a payout to a named contact. A dry run unless <code class="inline" translate="no">--execute</code> is given.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">ask "send $10 to ada"</code></td><td data-label="What it does"><span>Same as <code class="inline" translate="no">pay</code>, from a plain-language request. Accepts the same flags.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">register <span class="nw">[--repo &lt;url&gt;]</span> <span class="nw">[--execute]</span></code></td><td data-label="What it does"><span>Registers the agent's ERC-8004 identity, then writes its id into the registration file.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">verify &lt;hash&gt;</code></td><td data-label="What it does"><span>Reads a transaction from Celo and shows the attribution tags it carries. Needs the key file from <code class="inline" translate="no">keygen</code>.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card-f">
+          <div class="stack qs">
+            <span class="label">Quick start</span>
+            <div class="code">
+              <pre translate="no">npm install
+npm test
+node src/agent.mjs keygen
+cp contacts.example.json contacts.json
+node src/agent.mjs quote --amount 10
+node src/agent.mjs pay --to ada --amount 10</pre>
+              <button class="icon-btn" type="button" aria-label="Copy quick start commands" data-copy-label="Commands copied" data-copy="npm install
+npm test
+node src/agent.mjs keygen
+cp contacts.example.json contacts.json
+node src/agent.mjs quote --amount 10
+node src/agent.mjs pay --to ada --amount 10"><svg class="i"><use href="#i-copy"/></svg></button>
+            </div>
+            <p class="hint">Add your recipient's address to <code class="inline" translate="no">contacts.json</code> first. The last command is a dry run and sends nothing.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" id="config" aria-labelledby="config-h">
+        <div class="card-h"><h2 id="config-h">Configuration</h2><span class="muted small">Environment variables, read in <code class="inline" translate="no">src/config.mjs</code></span></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th scope="col">Variable</th><th scope="col">Default</th><th scope="col">What it controls</th></tr></thead>
+            <tbody>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">MAX_USD</code></td><td data-label="Default" class="num"><span>25</span></td><td data-label="What it controls"><span>Largest payout in USD. Checked before any quote.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">MAX_SLIPPAGE_BPS</code></td><td data-label="Default" class="num"><span>300</span></td><td data-label="What it controls"><span>How much worse the firm quote may be than the preview, in basis points (300 = 3%).</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">ATTRIBUTION_CODE</code></td><td data-label="Default"><span class="mono nw" translate="no">celo_7360953d1b53</span></td><td data-label="What it controls"><span>Tag added to every transaction. 1–32 characters of a–z, 0–9 and _.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">CELO_AGENT_KEY_FILE</code></td><td data-label="Default"><span class="mono" translate="no">~/.celo-naira-agent/<wbr>agent.json</span></td><td data-label="What it controls"><span>Where the agent's private key is stored, outside the repo.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">CONTACTS_FILE</code></td><td data-label="Default"><span class="mono nw" translate="no">contacts.json</span></td><td data-label="What it controls"><span>The allow-list of recipients and your own wallets. Git-ignored.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">TEXTILE_API</code></td><td data-label="Default"><span class="mono" translate="no">https://<wbr>api.textilecredit.com/<wbr>v2</span></td><td data-label="What it controls"><span>Textile FX RFQ endpoint for previews and firm quotes.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">ANTHROPIC_API_KEY</code></td><td data-label="Default"><span>Not set</span></td><td data-label="What it controls"><span>Optional. Lets <code class="inline" translate="no">ask</code> understand free-form requests. Without it, a plain parser handles “send $10 to ada”. Never commit it.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">ANTHROPIC_MODEL</code></td><td data-label="Default"><span class="mono nw" translate="no">claude-sonnet-5-5</span></td><td data-label="What it controls"><span>Model used by <code class="inline" translate="no">ask</code>. Used only when <code class="inline" translate="no">ANTHROPIC_API_KEY</code> is set.</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" id="addresses" aria-labelledby="addr-h">
+        <div class="card-h"><h2 id="addr-h">Contracts and addresses</h2><span class="muted small">Celo mainnet, chain 42220</span></div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th scope="col">Name</th><th scope="col">Address</th></tr></thead>
+            <tbody>
+              <tr><td class="lead-cell strong" data-label="Name">Agent wallet</td><td data-label="Address"><span class="addr-cell"><a class="mono addr" translate="no" href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e" aria-label="Agent wallet on Celoscan">0x8a695cf54CB44753c8b784EB36d266f748617a1e</a><button class="icon-btn sm" type="button" aria-label="Copy agent wallet address" data-copy="0x8a695cf54CB44753c8b784EB36d266f748617a1e" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></td></tr>
+              <tr><td class="lead-cell strong" data-label="Name">ERC-8004 Identity Registry</td><td data-label="Address"><span class="addr-cell"><a class="mono addr" translate="no" href="https://celoscan.io/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" aria-label="ERC-8004 Identity Registry on Celoscan">0x8004A169FB4a3325136EB29fA0ceB6D2e539a432</a><button class="icon-btn sm" type="button" aria-label="Copy Identity Registry address" data-copy="0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></td></tr>
+              <tr><td class="lead-cell strong" data-label="Name">USD₮</td><td data-label="Address"><span class="addr-cell"><a class="mono addr" translate="no" href="https://celoscan.io/address/0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e" aria-label="USD₮ token on Celoscan">0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e</a><button class="icon-btn sm" type="button" aria-label="Copy USD₮ token address" data-copy="0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></td></tr>
+              <tr><td class="lead-cell strong" data-label="Name">cNGN</td><td data-label="Address"><span class="addr-cell"><a class="mono addr" translate="no" href="https://celoscan.io/address/0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f" aria-label="cNGN token on Celoscan">0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f</a><button class="icon-btn sm" type="button" aria-label="Copy cNGN token address" data-copy="0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></td></tr>
+              <tr><td class="lead-cell" data-label="Name"><div><div class="strong">Textile LimitOrderReactor</div><div class="micro muted">Per the hackathon brief</div></div></td><td data-label="Address"><span class="addr-cell"><a class="mono addr" translate="no" href="https://celoscan.io/address/0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3" aria-label="Textile LimitOrderReactor on Celoscan">0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3</a><button class="icon-btn sm" type="button" aria-label="Copy Textile reactor address" data-copy="0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card-f"><span class="small muted">The agent does not hard-code the reactor. It approves whichever contract Textile names in each firm quote.</span></div>
+      </section>
+
+      <section class="card" id="faq" aria-labelledby="faq-h">
+        <div class="card-h"><h2 id="faq-h">FAQ</h2></div>
+        <details class="faq">
+          <summary>Can this website send money?</summary>
+          <div class="faq-a">No. The site is read-only. It has no wallet connection and holds no keys. It reads public data from Celo (Forno RPC and Blockscout) and a published rate file. Payouts are sent only by the agent, from the command line, after a firm quote and the owner's confirmation.</div>
+        </details>
+        <details class="faq">
+          <summary>Where does the exchange rate come from?</summary>
+          <div class="faq-a">From a free Textile FX preview for $10 of USD₮, which includes Textile's fee. A GitHub Action fetches it every 30 minutes and publishes it with the site. If the preview is unavailable, the site falls back to Textile's market bid for USD₮/NGN and labels it as before fees. A real payout always uses a fresh firm quote at the time it runs.</div>
+        </details>
+        <details class="faq">
+          <summary>Is it custodial?</summary>
+          <div class="faq-a">The agent wallet is meant to hold funds only for the payout in progress: the payer funds it, and one run converts the USD₮ and pays out the cNGN. The owner keeps the private key in a local file. This website never holds funds.</div>
+        </details>
+        <details class="faq">
+          <summary>What is the attribution tag?</summary>
+          <div class="faq-a">A short code, <code class="inline" translate="no">celo_7360953d1b53</code>, appended to the data of every transaction the agent sends, following ERC-8021. It credits the transactions to this hackathon entry. It is public, not a secret. You can check any transaction for it on the <a class="link" href="verify.html">Verify</a> page or with <code class="inline" translate="no">verify &lt;hash&gt;</code>.</div>
+        </details>
+        <details class="faq">
+          <summary>What if the price moves?</summary>
+          <div class="faq-a">Before converting, the agent compares the firm quote with the free preview. If the firm quote would pay more than 3% less cNGN, it stops and sends nothing. If the quote expires while the approval is confirming, the swap is not sent and you run it again for a fresh quote.</div>
+        </details>
+        <details class="faq">
+          <summary>Can the AI change the limits?</summary>
+          <div class="faq-a">No. The optional AI only turns a request like “send $10 to ada” into a contact name and an amount. It never sees an address. Code then looks up the name in your contacts and applies the cap, the allow-list and the price check, exactly as for <code class="inline" translate="no">pay</code>.</div>
+        </details>
+      </section>
+
+    </div>
+
+    <aside class="card docs-aside" aria-labelledby="toc-h">
+      <div class="card-h"><h2 id="toc-h">On this page</h2></div>
+      <nav class="card-b" aria-label="On this page">
+        <ul class="toc">
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#flow">How a payout runs</a></li>
+          <li><a href="#safeguards">Safeguards</a></li>
+          <li><a href="#cli">Command line</a></li>
+          <li><a href="#config">Configuration</a></li>
+          <li><a href="#addresses">Contracts and addresses</a></li>
+          <li><a href="#faq">FAQ</a></li>
+        </ul>
+      </nav>
+      <div class="card-f">
+        <span class="small muted">Read the code behind every rule.</span>
+        <a class="btn btn-secondary btn-sm" href="https://github.com/deeeko/celo-naira-payout-agent">Source code <svg class="i"><use href="#i-ext"/></svg></a>
+      </div>
+    </aside>
+  </div>
+</main>
+<footer class="site-footer">
+  <div class="container">
+    <div class="cols">
+      <div>
+        <div class="foot-brand"><img src="logo.png" alt="" width="28" height="28">Naira Payout</div>
+        <p class="small soft" style="max-width:40ch">An agent that converts USD₮ to cNGN on Textile FX and pays an approved recipient on Celo.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+      </div>
+      <div>
+        <h4>Resources</h4>
+        <ul><li><a href="docs.html">Docs</a></li><li><a href="https://github.com/deeeko/celo-naira-payout-agent">Source code</a></li><li><a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e">Agent on Celoscan</a></li><li><a href="https://fx-docs.textilecredit.com">Textile FX docs</a></li></ul>
+      </div>
+    </div>
+    <div class="base"><span>Built for Agents Open for Business on Celo · Track 3: Stablecoin Corridors</span><span>Data: Celo Forno RPC · Blockscout · Textile FX</span></div>
+  </div>
+</footer>
+<script type="module" src="js/docs.js"></script>
+</body>
+</html>

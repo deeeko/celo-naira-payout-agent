@@ -3,256 +3,204 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://forno.celo.org https://celo.blockscout.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self'; base-uri 'none'; form-action 'none'">
-<title>Naira Payout Agent</title>
-<meta name="description" content="An agent on Celo that converts USD₮ to cNGN on Textile FX and pays an approved recipient. Live rate, onchain identity and tagged transactions.">
-<meta name="theme-color" content="#008751">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://forno.celo.org https://celo.blockscout.com; style-src 'self' 'unsafe-inline' https://api.fontshare.com; font-src https://cdn.fontshare.com; img-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Overview · Naira Payout</title>
+<meta name="description" content="An agent on Celo that converts USD₮ to cNGN on Textile FX and pays an approved recipient, with its live rate, identity and transactions.">
+<meta name="theme-color" content="#040806">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Naira Payout Agent · Dollars in. Naira out.">
-<meta property="og:description" content="An agent on Celo that converts USD₮ to cNGN on Textile FX and pays an approved recipient. Live rate, onchain identity and tagged transactions.">
-<meta property="og:url" content="https://deeeko.github.io/celo-naira-payout-agent/">
+<meta property="og:title" content="Naira Payout Agent">
+<meta property="og:description" content="Send dollars. They receive naira. Converts on Textile FX and pays out on Celo.">
 <meta property="og:image" content="https://deeeko.github.io/celo-naira-payout-agent/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="logo.png">
 <link rel="apple-touch-icon" href="logo.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --flag: #008751;      /* Nigerian flag green: the ground */
-    --flag-deep: #00512f; /* the printer slot, fact cards, footer */
-    --paper: #fdfdfb;     /* thermal receipt paper */
-    --ink: #17201b;       /* receipt print */
-    --muted: #5f6e66;     /* secondary print on paper */
-    --stamp: #5a3fcf;     /* rubber-stamp violet: verification only */
-    --on-flag: #ffffff;
-    /* Archivo: condensed + heavy for headlines (newspaper front page / painted shop sign),
-       normal width for body. Courier Prime: the POS-receipt printout. */
-    --display: "Archivo", "Arial Narrow", system-ui, sans-serif;
-    --body: "Archivo", system-ui, sans-serif;
-    --mono: "Courier Prime", "Courier New", ui-monospace, monospace;
-    --gutter: clamp(16px, 4vw, 48px);
-  }
-  * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
-  body { margin: 0; background: var(--flag); color: var(--on-flag); font: 400 17px/1.55 var(--body); }
-  a { color: inherit; text-underline-offset: 3px; text-decoration-thickness: 1px; transition: text-decoration-thickness 120ms ease; }
-  @media (hover: hover) and (pointer: fine) { a:hover { text-decoration-thickness: 2px; } }
-  :focus-visible { outline: 3px solid var(--on-flag); outline-offset: 3px; border-radius: 4px; }
-  .receipt :focus-visible, .slip :focus-visible { outline-color: var(--ink); }
-  code, .mono { font-family: var(--mono); font-size: .92em; white-space: nowrap; }
-  h1, h2, h3 { text-wrap: balance; }
-  p, li { text-wrap: pretty; }
-  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 var(--gutter); }
-
-  /* ---------- hero ---------- */
-  .hero { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: clamp(28px, 5vw, 72px); align-items: start; padding: clamp(40px, 8vw, 96px) 0 clamp(48px, 7vw, 88px); }
-  .kicker { font: 500 13px/1.5 var(--mono); letter-spacing: .08em; text-transform: uppercase; margin: 0 0 22px; }
-  h1 { font: 900 clamp(48px, 16vw, 104px)/0.88 var(--display); font-stretch: 62%; letter-spacing: -0.005em; text-transform: uppercase; margin: 0 0 26px; }
-  h1 span { display: block; white-space: nowrap; }
-  @media (min-width: 861px) { h1 { font-size: clamp(64px, 7.4vw, 104px); } }
-  .lede { font-size: clamp(17px, 1.6vw, 20px); max-width: 34ch; margin: 0 0 22px; }
-  .hero-links { display: flex; flex-wrap: wrap; gap: 4px 24px; font-weight: 600; margin: 0; }
-  .hero-links a { padding: 10px 0; touch-action: manipulation; }
-
-  /* ---------- the receipt (signature) ---------- */
-  .slot { position: relative; padding-top: 14px; filter: drop-shadow(0 18px 22px rgba(0, 40, 22, .38)); }
-  .slot::before { content: ""; position: absolute; z-index: 1; top: 0; left: -10px; right: -10px; height: 14px; border-radius: 8px; background: var(--flag-deep); box-shadow: inset 0 -4px 0 rgba(0,0,0,.25); }
-  .receipt {
-    --tooth: 9px;
-    container-type: inline-size;
-    position: relative; background: var(--paper); color: var(--ink); font-family: var(--mono); font-size: 15px;
-    padding: 26px 26px 34px;
-    -webkit-mask: radial-gradient(circle var(--tooth) at 50% 100%, #0000 98%, #000) 50% 100% / calc(var(--tooth) * 2.2) 51% repeat-x,
-                  linear-gradient(#000 0 0) top / 100% 51% no-repeat;
-            mask: radial-gradient(circle var(--tooth) at 50% 100%, #0000 98%, #000) 50% 100% / calc(var(--tooth) * 2.2) 51% repeat-x,
-                  linear-gradient(#000 0 0) top / 100% 51% no-repeat;
-    animation: feed 1s cubic-bezier(.2,.7,.2,1) .2s backwards;
-  }
-  /* paper feeds down out of the slot */
-  @keyframes feed { from { clip-path: inset(0 0 100% 0); transform: translateY(-24px); } to { clip-path: inset(0 0 -40px 0); transform: none; } }
-  .r-head { text-align: center; letter-spacing: .06em; }
-  .r-head b { display: block; font-weight: 600; font-size: 17px; }
-  .r-head small { color: var(--muted); font-size: 12px; }
-  .rule { border: 0; border-top: 2px dashed #c9cfc9; margin: 18px 0; }
-  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 5px 0; }
-  .k { color: var(--muted); text-transform: uppercase; font-size: 12.5px; letter-spacing: .06em; }
-  .amount { display: flex; align-items: baseline; gap: 6px; }
-  .amount input {
-    width: 5.6ch; min-height: 44px; padding: 8px 2px 4px; font: 600 22px var(--mono); font-variant-numeric: tabular-nums;
-    color: var(--ink); background: transparent; border: 0; border-bottom: 2px solid var(--ink); border-radius: 0; text-align: right;
-    caret-color: var(--stamp); transition: border-color 150ms ease;
-  }
-  .amount input:focus { border-bottom-color: var(--stamp); }
-  .amount input:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
-  @media (hover: hover) and (pointer: fine) { .amount input:hover { border-bottom-color: var(--stamp); } }
-  #rate { font-variant-numeric: tabular-nums; }
-  #rate:not(.ready) { color: var(--muted); }
-  .receive {
-    display: block; text-align: right; margin: 8px 0 2px; white-space: nowrap; font-weight: 600; letter-spacing: -0.02em;
-    font-family: var(--mono); font-variant-numeric: tabular-nums; line-height: 1.1;
-    font-size: min(40px, calc(100cqi / (var(--n, 11) * 0.62)));
-    transition: color 150ms ease;
-  }
-  .receive.over { color: var(--muted); text-decoration: line-through 2px; }
-  .note { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin: 0; }
-  #asof { min-height: 3em; }
-  .warn { color: #a3361d; font-size: 13px; line-height: 1.4; margin: 6px 0 0; min-height: 2.8em; }
-
-  /* ---------- sections ---------- */
-  section.band { padding: clamp(48px, 7vw, 88px) 0; border-top: 1px solid rgba(255,255,255,.22); scroll-margin-top: 8px; }
-  h2 { font: 800 clamp(34px, 4.8vw, 56px)/0.95 var(--display); font-stretch: 68%; letter-spacing: 0; margin: 0 0 12px; }
-  .sub { max-width: 62ch; margin: 0 0 32px; }
-
-  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 2px; background: rgba(255,255,255,.22); border-radius: 10px; overflow: hidden; margin: 0; }
-  .fact { background: var(--flag-deep); padding: 18px 20px; min-width: 0; }
-  .fact dt { font: 500 12px var(--mono); letter-spacing: .07em; text-transform: uppercase; color: #cfe9da; margin-bottom: 6px; }
-  .fact dd { margin: 0; font: 500 16px/1.55 var(--mono); min-height: calc(2 * 1.55em); overflow-wrap: anywhere; }
-  .pending { opacity: .6; }
-  .ok { color: #b8f5cf; }
-
-  /* ledger: each transaction is a short slip with a stamp */
-  .ledger { display: grid; gap: 14px; }
-  .slip { position: relative; background: var(--paper); color: var(--ink); border-radius: 6px; padding: 16px 18px; display: grid; grid-template-columns: 1fr auto; gap: 6px 18px; align-items: center; font-family: var(--mono); font-size: 14px; transition: box-shadow 150ms ease, transform 150ms ease; }
-  .slip:not(.sk) { animation: slip-in 260ms cubic-bezier(.2,.7,.2,1) backwards; }
-  @keyframes slip-in { from { opacity: 0; transform: translateY(6px); } }
-  @media (hover: hover) and (pointer: fine) { .slip:not(.sk):hover { box-shadow: 0 0 0 2px var(--on-flag); } }
-  .slip:not(.sk):active { transform: scale(.99); }
-  .slip.sk { opacity: .55; }
-  .slip .what { font: 600 16px var(--body); }
-  .slip .meta { color: var(--muted); font-size: 12.5px; grid-column: 1; overflow-wrap: anywhere; }
-  .slip .meta a::after { content: ""; position: absolute; inset: 0; border-radius: 6px; }
-  .stamp { grid-row: 1 / span 2; grid-column: 2; justify-self: end; color: var(--stamp); border: 2.5px solid currentColor; border-radius: 6px; padding: 5px 9px; font: 600 12px/1.3 var(--mono); letter-spacing: .06em; text-transform: uppercase; transform: rotate(-4deg); text-align: center; mix-blend-mode: multiply; }
-  .stamp code { font: inherit; text-transform: none; letter-spacing: .02em; }
-  .stamp.none { color: #69736d; border-style: dashed; }
-  .notice { background: var(--flag-deep); border: 1px dashed rgba(255,255,255,.45); border-radius: 8px; padding: 18px 20px; margin: 0 0 14px; }
-  .notice a { font-weight: 600; }
-
-  .steps { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; counter-reset: s; }
-  .steps li { counter-increment: s; border-top: 3px solid var(--on-flag); padding-top: 14px; }
-  .steps li::before { content: counter(s); font: 600 13px var(--mono); }
-  .steps h3 { font: 600 19px/1.2 var(--body); margin: 6px 0 6px; }
-  .steps p { margin: 0; font-size: 15.5px; }
-
-  .limits { columns: 2 320px; column-gap: 40px; padding: 0; margin: 0; list-style: none; }
-  .limits li { break-inside: avoid; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,.22); }
-  .limits b { font-weight: 600; }
-
-  footer { background: var(--flag-deep); padding: 34px 0 44px; font-size: 15px; }
-  footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 28px; justify-content: space-between; }
-
-  @media (max-width: 860px) {
-    .hero { grid-template-columns: 1fr; }
-    .steps { grid-template-columns: 1fr 1fr; }
-  }
-  @media (max-width: 520px) {
-    .steps { grid-template-columns: 1fr; }
-    .slip { grid-template-columns: 1fr; }
-    .stamp { grid-row: auto; grid-column: 1; justify-self: start; margin-top: 6px; }
-    .receipt { padding: 22px 18px 32px; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    html { scroll-behavior: auto; }
-    .receipt { animation: fade 200ms ease backwards; }
-    .slip:not(.sk) { animation: none; }
-  }
-  @keyframes fade { from { opacity: 0; } }
-</style>
+<link rel="preconnect" href="https://api.fontshare.com">
+<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=general-sans@300,400,500,600&f[]=sentient@500i&display=swap">
+<link rel="stylesheet" href="assets/styles.css">
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+</svg>
+<div class="sky" aria-hidden="true"></div>
+<div class="nav-wrap">
+  <nav class="nav" aria-label="Main">
+    <a class="nav-brand" href="index.html"><img src="logo.png" alt="" width="30" height="30"><span>Naira Payout</span></a>
+    <div class="nav-links">
+      <a href="index.html">Overview</a>
+      <a href="quote.html">Quote</a>
+      <a href="transactions.html">Transactions</a>
+      <a href="agent.html">Agent</a>
+      <a href="verify.html">Verify</a>
+      <a href="docs.html">Docs</a>
+    </div>
+    <a class="btn btn-secondary btn-sm" href="https://github.com/deeeko/celo-naira-payout-agent">GitHub</a>
+    <button class="icon-btn menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu"><svg class="i"><use href="#i-menu"/></svg></button>
+    <div class="mobile-menu" id="mobile-menu" data-open="false">
+      <a href="index.html">Overview</a>
+      <a href="quote.html">Quote</a>
+      <a href="transactions.html">Transactions</a>
+      <a href="agent.html">Agent</a>
+      <a href="verify.html">Verify</a>
+      <a href="docs.html">Docs</a>
+    </div>
+  </nav>
+</div>
 <main>
-  <div class="wrap">
-    <header class="hero">
-      <div>
-        <p class="kicker">Celo mainnet · Textile FX · <span translate="no">ERC-8004</span> agent #10079</p>
-        <h1><span>Dollars in.</span><span>Naira out.</span></h1>
-        <p class="lede">An agent that converts USD₮ to cNGN, the naira stablecoin, and pays it to a recipient approved in advance. Every transaction it sends carries an attribution tag you can check below.</p>
-        <p class="hero-links">
-          <a href="#activity">See its transactions</a>
-          <a href="https://github.com/deeeko/celo-naira-payout-agent">Read the code</a>
-        </p>
-      </div>
+  <section class="hero">
+    <div class="tile" aria-hidden="true">₦</div>
+    <h1 class="display">Send dollars. They receive <em>naira</em>.</h1>
+    <p class="lead">An agent that converts USD₮ to cNGN on Textile FX and pays an approved recipient on Celo. Balances, identity and transactions are read live from Celo. The rate is Textile FX's, refreshed every 30 minutes.</p>
+    <div class="actions">
+      <a class="btn btn-primary btn-lg" href="quote.html">Get a quote</a>
+      <a class="btn btn-secondary btn-lg" href="transactions.html">View transactions</a>
+    </div>
+  </section>
 
-      <div class="slot">
-        <div class="receipt" role="group" aria-labelledby="r-title">
-          <div class="r-head" id="r-title"><b>NAIRA PAYOUT AGENT</b><small>CELO MAINNET · TEXTILE FX</small></div>
-          <hr class="rule">
-          <div class="row">
-            <label class="k" for="usd">You send</label>
-            <span class="amount"><input id="usd" name="usd" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" value="10" aria-describedby="cap-msg"> <span translate="no">USD₮</span></span>
+  <section class="container" aria-labelledby="stats-title">
+    <h2 id="stats-title" class="sr-only">Live stats</h2>
+    <div class="stats">
+      <div class="card stat" aria-live="polite">
+        <div class="stat-label">Exchange rate</div>
+        <div class="stat-value num" id="st-rate"><span class="skel lg"></span></div>
+        <div class="stat-sub" id="st-rate-sub"><span class="skel"></span></div>
+      </div>
+      <div class="card stat" aria-live="polite">
+        <div class="stat-label">Agent identity</div>
+        <div class="stat-value num" id="st-id"><span class="skel lg"></span></div>
+        <div class="stat-sub" id="st-id-sub"><span class="skel"></span></div>
+      </div>
+      <div class="card stat" aria-live="polite">
+        <div class="stat-label">Transactions sent</div>
+        <div class="stat-value num" id="st-tx"><span class="skel lg"></span></div>
+        <div class="stat-sub" id="st-tx-sub"><span class="skel"></span></div>
+      </div>
+      <div class="card stat" aria-live="polite">
+        <div class="stat-label">Payouts sent</div>
+        <div class="stat-value num" id="st-pay"><span class="skel lg"></span></div>
+        <div class="stat-sub" id="st-pay-sub"><span class="skel"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="container mt-24">
+    <div class="grid-main">
+      <div class="card">
+        <div class="card-h"><h2>Quick quote</h2><span class="badge neutral" id="qq-basis">Estimate</span></div>
+        <div class="card-b">
+          <div class="field">
+            <label class="label" for="qq-amount">You send</label>
+            <div class="money">
+              <input id="qq-amount" size="4" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" value="10" aria-describedby="qq-hint">
+              <span class="token">USD₮</span>
+            </div>
+            <p class="hint" id="qq-hint">Up to $25 per payout.</p>
           </div>
-          <div class="row"><span class="k">Rate</span><span id="rate">loading…</span></div>
-          <hr class="rule">
-          <div class="row"><span class="k" id="out-label">They receive (approx.)</span></div>
-          <output class="receive" id="out" for="usd" aria-labelledby="out-label" aria-live="polite">≈ ₦ —</output>
-          <p class="warn" id="cap-msg" role="status" aria-live="polite"></p>
-          <hr class="rule">
-          <p class="note" id="asof">Fetching the latest Textile FX rate…</p>
-          <p class="note" style="margin-top:8px">This is a price check, not a payment. When it pays, the agent takes a fresh preview and a firm quote, and stops if the firm quote is more than 3% worse than the preview.</p>
+          <div class="swap-arrow" aria-hidden="true"><span><svg class="i"><use href="#i-down"/></svg></span></div>
+          <div class="receive">
+            <div class="label">Recipient gets</div>
+            <output id="qq-out" for="qq-amount" aria-live="polite"><span class="skel lg"></span></output>
+          </div>
+          <p class="micro muted mt-16" id="qq-note">This site is read-only and cannot send money. Payouts run from the agent's command line.</p>
+        </div>
+        <div class="card-f">
+          <span class="small muted">Firm price is set by Textile at send time.</span>
+          <a class="link small row" href="quote.html">Open full quote <svg class="i"><use href="#i-right"/></svg></a>
         </div>
       </div>
-    </header>
-  </div>
 
-  <section class="band" aria-labelledby="who">
-    <div class="wrap">
-      <h2 id="who">The agent, onchain</h2>
-      <p class="sub">Read live in your browser from Celo's public RPC (Forno). Nothing in this section comes from our server.</p>
-      <dl class="facts">
-        <div class="fact"><dt>Identity (<span translate="no">ERC-8004</span>)</dt><dd>Agent #10079 · <span id="owner-check" class="pending">checking…</span></dd></div>
-        <div class="fact"><dt>Agent wallet</dt><dd><a id="wallet-link" translate="no" href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e">0x8a69…7a1e</a></dd></div>
-        <div class="fact"><dt>Registered as</dt><dd id="reg-name"><span class="pending">checking…</span></dd></div>
-        <div class="fact"><dt>Balances</dt><dd id="balances" translate="no"><span class="pending">checking…</span></dd></div>
-      </dl>
-    </div>
-  </section>
-
-  <section class="band" id="activity" aria-labelledby="act">
-    <div class="wrap">
-      <h2 id="act">What it has sent</h2>
-      <p class="sub">Every transaction from the agent wallet, read live from the Blockscout explorer. The stamp shows the attribution tag decoded from the transaction's own data.</p>
-      <div class="ledger" id="ledger" aria-busy="true">
-        <article class="slip sk" aria-hidden="true"><div class="what">&nbsp;</div><div class="meta">Loading from the Celo explorer…</div><div class="stamp none">&nbsp;<br>&nbsp;</div></article>
-        <article class="slip sk" aria-hidden="true"><div class="what">&nbsp;</div><div class="meta">&nbsp;</div><div class="stamp none">&nbsp;<br>&nbsp;</div></article>
+      <div class="card">
+        <div class="card-h"><h2>Latest activity</h2><span class="micro muted">Agent wallet</span></div>
+        <div class="card-b" id="activity" aria-live="polite" aria-busy="true">
+          <ul class="kv-list">
+            <li><span><span class="skel"></span></span><span><span class="skel"></span></span></li>
+            <li><span><span class="skel"></span></span><span><span class="skel"></span></span></li>
+            <li><span><span class="skel"></span></span><span><span class="skel"></span></span></li>
+          </ul>
+        </div>
+        <div class="card-f">
+          <span class="small muted">Read from Blockscout</span>
+          <a class="link small row" href="transactions.html">View all transactions <svg class="i"><use href="#i-right"/></svg></a>
+        </div>
       </div>
     </div>
   </section>
 
-  <section class="band" aria-labelledby="how">
-    <div class="wrap">
-      <h2 id="how">How a payout runs</h2>
-      <p class="sub">The same steps, in this order, on every run.</p>
-      <ol class="steps">
-        <li><h3>Quote</h3><p>Gets a free price from Textile FX, then a firm quote for the exact amount.</p></li>
-        <li><h3>Convert</h3><p>Lets Textile's contract take the USD₮ if needed, then swaps it to cNGN in one transaction.</p></li>
-        <li><h3>Pay</h3><p>Sends exactly the cNGN the swap delivered to the approved recipient.</p></li>
-        <li><h3>Check</h3><p>Reads each transaction back from the chain and flags any that is missing the tag.</p></li>
-      </ol>
+  <section class="section container" aria-labelledby="how-title">
+    <div class="section-head">
+      <div>
+        <h2 class="section-title" id="how-title">How a payout works</h2>
+        <p class="section-sub">Each payout is capped at $25, goes only to a recipient on the approved list, and asks for confirmation before anything is sent.</p>
+      </div>
     </div>
+    <ol class="steps">
+      <li>
+        <h3>Quote</h3>
+        <p>Gets a preview price from Textile FX, then a firm quote. It stops if the firm quote is more than 3% worse than the preview.</p>
+      </li>
+      <li>
+        <h3>Convert</h3>
+        <p>If the current allowance is too low, approves exactly the USD₮ the firm quote needs, then swaps it for cNGN.</p>
+      </li>
+      <li>
+        <h3>Pay</h3>
+        <p>Measures the cNGN the swap delivered and sends exactly that amount to the recipient.</p>
+      </li>
+      <li>
+        <h3>Check</h3>
+        <p>Reads back every transaction it sent and exits with an error if any is missing the attribution tag.</p>
+      </li>
+    </ol>
   </section>
 
-  <section class="band" aria-labelledby="lim">
-    <div class="wrap">
-      <h2 id="lim">Limits the AI can't change</h2>
-      <p class="sub">These are checks in the code (<code translate="no">src/guards.mjs</code>, <code translate="no">src/pay.mjs</code>). The optional AI only turns a request into a contact name and an amount. It never sees an address, and every rule below still applies.</p>
-      <ul class="limits">
-        <li><b>Dry run unless told otherwise.</b> Nothing moves without <code translate="no">--execute</code>. It then shows the amount and recipient and waits for you to type “yes”, unless you pass <code translate="no">--yes</code> to answer up front.</li>
-        <li><b>$25 per payout.</b> Larger amounts are refused before any quote is requested. Only the owner can change the cap (<code translate="no">MAX_USD</code>).</li>
-        <li><b>Approved recipients only.</b> Payees must be named in an allow-list. The agent's own address, wallets listed as the owner's, the token and registry contracts and the zero address are always refused.</li>
-        <li><b>No bad prices.</b> It stops if the firm quote pays more than 3% (default) less cNGN than the preview, and won't send a swap whose quote has expired.</li>
-        <li><b>Pays what it received.</b> The payout is the measured change in its cNGN balance, not an estimate.</li>
-        <li><b>Keys stay local.</b> The private key sits in a file outside the repo. The code signs locally and never sends or prints it.</li>
-      </ul>
+  <section class="container" aria-label="More">
+    <div class="grid-3">
+      <a class="card card-link card-b" href="verify.html">
+        <div class="row between"><h3>Verify a transaction</h3><svg class="i muted"><use href="#i-right"/></svg></div>
+        <p class="small soft mt-8">Paste any Celo transaction hash to check its status and attribution tag.</p>
+      </a>
+      <a class="card card-link card-b" href="agent.html">
+        <div class="row between"><h3>Agent identity</h3><svg class="i muted"><use href="#i-right"/></svg></div>
+        <p class="small soft mt-8">The agent's ERC-8004 registration, owner check and wallet balances.</p>
+      </a>
+      <a class="card card-link card-b" href="docs.html">
+        <div class="row between"><h3>Docs and CLI</h3><svg class="i muted"><use href="#i-right"/></svg></div>
+        <p class="small soft mt-8">How to install the agent, run a dry run and send a payout.</p>
+      </a>
     </div>
   </section>
 </main>
-<footer>
-  <div class="wrap">
-    <span>Built for Agents Open for Business on Celo, Track 3: Stablecoin Corridors.</span>
-    <a href="https://github.com/deeeko/celo-naira-payout-agent">Source on GitHub</a>
+<footer class="site-footer">
+  <div class="container">
+    <div class="cols">
+      <div>
+        <div class="foot-brand"><img src="logo.png" alt="" width="28" height="28">Naira Payout</div>
+        <p class="small soft" style="max-width:40ch">An agent that converts USD₮ to cNGN on Textile FX and pays an approved recipient on Celo.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+      </div>
+      <div>
+        <h4>Resources</h4>
+        <ul><li><a href="docs.html">Docs</a></li><li><a href="https://github.com/deeeko/celo-naira-payout-agent">Source code</a></li><li><a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e">Agent on Celoscan</a></li><li><a href="https://fx-docs.textilecredit.com">Textile FX docs</a></li></ul>
+      </div>
+    </div>
+    <div class="base"><span>Built for Agents Open for Business on Celo · Track 3: Stablecoin Corridors</span><span>Data: Celo Forno RPC · Blockscout · Textile FX</span></div>
   </div>
 </footer>
-<script src="app.js" type="module"></script>
+<script type="module" src="js/index.js"></script>
 </body>
 </html>

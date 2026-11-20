@@ -76,11 +76,12 @@ export async function pay({ to, amount, execute = false, yes = false }) {
   const hashes = {};
   if (allowance < takerPays) {
     if (allowance > 0n) {
-      const reset = await wallet.writeContract({ address: TOKENS.USDT.address, abi: erc20Abi, functionName: "approve", args: [reactor, 0n] });
-      await pub.waitForTransactionReceipt({ hash: reset });
+      hashes.reset = await wallet.writeContract({ address: TOKENS.USDT.address, abi: erc20Abi, functionName: "approve", args: [reactor, 0n] });
+      await pub.waitForTransactionReceipt({ hash: hashes.reset });
     }
-    const a = q.transactions.approval;
-    hashes.approval = await wallet.sendTransaction({ to: a.to, data: a.data, value: BigInt(a.value) });
+    // Build the approval ourselves: exactly takerPays, to the quote's reactor, on the USDT contract.
+    // (Not Textile's prepared approval calldata, so the amount and spender are guaranteed here.)
+    hashes.approval = await wallet.writeContract({ address: TOKENS.USDT.address, abi: erc20Abi, functionName: "approve", args: [reactor, takerPays] });
     const ar = await pub.waitForTransactionReceipt({ hash: hashes.approval });
     if (ar.status !== "success") throw new Error("Approval reverted. Nothing was swapped.");
   }

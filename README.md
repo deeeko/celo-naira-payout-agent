@@ -4,6 +4,9 @@ An agent that pays out in **cNGN** (Nigerian naira stablecoin) on **Celo mainnet
 A payer sends USD₮ to the agent; the agent converts it on **Textile FX** and pays the recipient in cNGN.
 Built for the *Agents Open for Business* hackathon, **Track 3: Stablecoin Corridors (Textile FX)**.
 
+**Live site:** https://deeeko.github.io/celo-naira-payout-agent/ — a live quote, the agent's ERC-8004 identity,
+its transactions with the attribution tag decoded from each one, and a tool to verify any Celo transaction's tag.
+
 > Status: work in progress. The mainnet run, its transaction links and the named user are added below once they exist. Nothing here is claimed before it happens.
 
 ## The job it does
@@ -17,7 +20,8 @@ Sending money to Nigeria is slow and expensive. This agent does one narrow job:
 
 Every transaction (approval, swap, payout, identity registration) carries the attribution tag
 `celo_7360953d1b53`, attached once where the wallet client is built (`src/chain.mjs`) using
-`@celo/attribution-tags`. After each run the agent re-reads the transactions on-chain and prints the tags it found.
+`@celo/attribution-tags`. After each payout the agent reads every transaction it sent back from the chain,
+flags any that is missing the tag, and exits with an error if one is.
 
 ## Safety is enforced in code, not by the AI
 
@@ -28,6 +32,7 @@ Every transaction (approval, swap, payout, identity registration) carries the at
 | Recipient must be an allow-listed contact. The agent, the builder's own wallets, token contracts and the zero address are blocked | `src/guards.mjs` |
 | Aborts if the firm quote is more than 3% worse than the free preview | `src/guards.mjs` |
 | Aborts if the quote expired during approval | `src/pay.mjs` |
+| Approves exactly the USD₮ the firm quote needs, to the quote's contract (built by the agent, not taken from the quote) | `src/pay.mjs` |
 | Pays out the *measured* cNGN balance change, never an assumed amount | `src/pay.mjs` |
 | Private key lives in a file outside the repo, is never printed, and is git-ignored | `src/chain.mjs` |
 
@@ -71,6 +76,8 @@ src/intent.mjs        plain-language request parser (optional AI)
 src/register8004.mjs  ERC-8004 registration
 src/chain.mjs         wallet and attribution-tagged client
 src/agent.mjs         command line
+site/                 the live site (GitHub Pages): overview, quote, transactions, agent, verify, docs
+scripts/fetch-rate.mjs  refreshes the site's Textile FX rate every 30 min (read-only GitHub Action)
 ```
 
 ## Status (updated as it happens)

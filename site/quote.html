@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://forno.celo.org https://celo.blockscout.com; style-src 'self' 'unsafe-inline' https://api.fontshare.com; font-src https://cdn.fontshare.com; img-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Quote · Naira Payout</title>
+<meta name="description" content="See how much naira a dollar payout delivers at the live Textile FX rate, and build the agent command to send it.">
+<meta name="theme-color" content="#040806">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Naira Payout Agent">
+<meta property="og:description" content="Send dollars. They receive naira. Converts on Textile FX and pays out on Celo.">
+<meta property="og:image" content="https://deeeko.github.io/celo-naira-payout-agent/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="logo.png">
+<link rel="apple-touch-icon" href="logo.png">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=general-sans@300,400,500,600&f[]=sentient@500i&display=swap">
+<link rel="stylesheet" href="assets/styles.css">
+<style>.field, .card-b.stack { grid-template-columns: minmax(0, 1fr); }</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+</svg>
+<div class="sky sky-sm" aria-hidden="true"></div>
+<div class="nav-wrap">
+  <nav class="nav" aria-label="Main">
+    <a class="nav-brand" href="index.html"><img src="logo.png" alt="" width="30" height="30"><span>Naira Payout</span></a>
+    <div class="nav-links">
+      <a href="index.html">Overview</a>
+      <a href="quote.html">Quote</a>
+      <a href="transactions.html">Transactions</a>
+      <a href="agent.html">Agent</a>
+      <a href="verify.html">Verify</a>
+      <a href="docs.html">Docs</a>
+    </div>
+    <a class="btn btn-secondary btn-sm" href="https://github.com/deeeko/celo-naira-payout-agent">GitHub</a>
+    <button class="icon-btn menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu"><svg class="i"><use href="#i-menu"/></svg></button>
+    <div class="mobile-menu" id="mobile-menu" data-open="false">
+      <a href="index.html">Overview</a>
+      <a href="quote.html">Quote</a>
+      <a href="transactions.html">Transactions</a>
+      <a href="agent.html">Agent</a>
+      <a href="verify.html">Verify</a>
+      <a href="docs.html">Docs</a>
+    </div>
+  </nav>
+</div>
+<main>
+  <header class="page-head container">
+    <span class="eyebrow">Live rate</span>
+    <h1 class="page-title">Quote a <em>payout</em></h1>
+    <p class="lead">Enter a dollar amount to see roughly how much naira the recipient gets at the current Textile FX rate, then copy the command that runs it with the agent.</p>
+  </header>
+
+  <div class="container">
+    <div class="grid-main">
+      <section class="card" aria-labelledby="amount-h">
+        <div class="card-h"><h2 id="amount-h">Amount</h2></div>
+        <div class="card-b">
+          <div class="alert"><svg class="i"><use href="#i-info"/></svg><span>This page shows prices only. It can't move money.</span></div>
+          <div id="rate-error" aria-live="polite"></div>
+
+          <div class="field mt-24">
+            <label class="label" for="amount">You send</label>
+            <div class="money">
+              <input id="amount" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" value="10" aria-describedby="amount-hint">
+              <span class="token">USD₮</span>
+            </div>
+            <div class="segmented" style="justify-self:start" role="group" aria-label="Preset amounts" id="presets">
+              <button type="button" data-amount="5" aria-pressed="false">$5</button>
+              <button type="button" data-amount="10" aria-pressed="true">$10</button>
+              <button type="button" data-amount="20" aria-pressed="false">$20</button>
+              <button type="button" data-amount="25" aria-pressed="false">$25</button>
+            </div>
+            <p class="hint" id="amount-hint" aria-live="polite">The agent pays up to $25 per payout.</p>
+          </div>
+
+          <div class="swap-arrow" aria-hidden="true"><span><svg class="i"><use href="#i-down"/></svg></span></div>
+
+          <div class="receive">
+            <label class="label" for="receive" id="receive-label">Recipient gets (approx.)</label>
+            <output id="receive" for="amount" aria-live="polite" class="num"><span class="skel lg"></span></output>
+          </div>
+
+          <ul class="kv-list mt-16" aria-live="polite">
+            <li><span>Exchange rate</span><span id="kv-rate" class="num"><span class="skel"></span></span></li>
+            <li><span>Fees</span><span id="kv-fees"><span class="skel"></span></span></li>
+            <li><span>Rate source</span><span id="kv-source"><span class="skel"></span></span></li>
+            <li><span>Route</span><span>USD₮ → cNGN on Textile FX</span></li>
+            <li><span>Delivered as</span><span>cNGN on Celo, redeemable for naira</span></li>
+            <li><span>Market bid / ask</span><span id="kv-market" class="num"><span class="skel"></span></span></li>
+          </ul>
+        </div>
+      </section>
+
+      <div class="stack">
+        <section class="card" aria-labelledby="run-h">
+          <div class="card-h"><h2 id="run-h">Run it with the agent</h2></div>
+          <div class="card-b stack">
+            <div class="field">
+              <label class="label" for="recipient">Recipient contact name</label>
+              <input class="input mono" id="recipient" type="text" value="ada" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="recipient-hint">
+              <p class="hint" id="recipient-hint" aria-live="polite">The name as it appears in your contacts.json.</p>
+            </div>
+
+            <div class="field">
+              <span class="label" id="mode-label">Mode</span>
+              <div class="segmented" style="justify-self:start" role="group" aria-labelledby="mode-label" id="mode">
+                <button type="button" data-mode="dry" aria-pressed="true">Dry run</button>
+                <button type="button" data-mode="real" aria-pressed="false">Real payout</button>
+              </div>
+            </div>
+
+            <div class="field">
+              <span class="label" id="cmd-label">Command</span>
+              <div class="code">
+                <pre id="cmd" aria-labelledby="cmd-label"></pre>
+                <button class="icon-btn" type="button" id="cmd-copy" aria-label="Copy command" data-copy-label="Command copied"><svg class="i"><use href="#i-copy"/></svg></button>
+              </div>
+            </div>
+
+            <div class="field">
+              <span class="label" id="ask-label">Or in plain language</span>
+              <div class="code">
+                <pre id="ask" aria-labelledby="ask-label"></pre>
+                <button class="icon-btn" type="button" id="ask-copy" aria-label="Copy plain-language command" data-copy-label="Command copied"><svg class="i"><use href="#i-copy"/></svg></button>
+              </div>
+            </div>
+
+            <p class="small muted" id="mode-note">A dry run fetches a quote and checks the recipient, then stops. Nothing is sent. With <code class="inline">--execute</code> the agent asks you to type "yes", takes a firm quote, stops if it is more than 3% worse than the preview, and refuses any recipient not in your contacts.</p>
+          </div>
+        </section>
+
+        <section class="card" aria-labelledby="before-h">
+          <div class="card-h"><h2 id="before-h">Before a real payout</h2></div>
+          <div class="card-b">
+            <ul class="checks" style="grid-template-columns:minmax(0,1fr)">
+              <li><svg class="i"><use href="#i-check"/></svg><span>The contact is in your <b>contacts.json</b> allow-list.</span></li>
+              <li><svg class="i"><use href="#i-check"/></svg><span>The agent wallet holds the <b>USD₮</b> and a little <b>CELO</b> for gas.</span></li>
+              <li><svg class="i"><use href="#i-check"/></svg><span>The amount is <b>$25 or less</b>.</span></li>
+            </ul>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</main>
+<footer class="site-footer">
+  <div class="container">
+    <div class="cols">
+      <div>
+        <div class="foot-brand"><img src="logo.png" alt="" width="28" height="28">Naira Payout</div>
+        <p class="small soft" style="max-width:40ch">An agent that converts USD₮ to cNGN on Textile FX and pays an approved recipient on Celo.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+      </div>
+      <div>
+        <h4>Resources</h4>
+        <ul><li><a href="docs.html">Docs</a></li><li><a href="https://github.com/deeeko/celo-naira-payout-agent">Source code</a></li><li><a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e">Agent on Celoscan</a></li><li><a href="https://fx-docs.textilecredit.com">Textile FX docs</a></li></ul>
+      </div>
+    </div>
+    <div class="base"><span>Built for Agents Open for Business on Celo · Track 3: Stablecoin Corridors</span><span>Data: Celo Forno RPC · Blockscout · Textile FX</span></div>
+  </div>
+</footer>
+<script type="module" src="js/quote.js"></script>
+</body>
+</html>

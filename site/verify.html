@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://forno.celo.org https://celo.blockscout.com; style-src 'self' 'unsafe-inline' https://api.fontshare.com; font-src https://cdn.fontshare.com; img-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Verify a transaction · Naira Payout</title>
+<meta name="description" content="Paste any Celo transaction hash to check whether it carries the Naira Payout agent's ERC-8021 attribution tag.">
+<meta name="theme-color" content="#040806">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Naira Payout Agent">
+<meta property="og:description" content="Send dollars. They receive naira. Converts on Textile FX and pays out on Celo.">
+<meta property="og:image" content="https://deeeko.github.io/celo-naira-payout-agent/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="logo.png">
+<link rel="apple-touch-icon" href="logo.png">
+<link rel="preconnect" href="https://api.fontshare.com">
+<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
+<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=general-sans@300,400,500,600&f[]=sentient@500i&display=swap">
+<link rel="stylesheet" href="assets/styles.css">
+<style>
+  #result pre.code-block { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .how { margin: 0; padding-left: 20px; display: grid; gap: 12px; color: var(--text-2); font-size: 14px; }
+  .how b { color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+</svg>
+<div class="sky sky-sm" aria-hidden="true"></div>
+<div class="nav-wrap">
+  <nav class="nav" aria-label="Main">
+    <a class="nav-brand" href="index.html"><img src="logo.png" alt="" width="30" height="30"><span>Naira Payout</span></a>
+    <div class="nav-links">
+      <a href="index.html">Overview</a>
+      <a href="quote.html">Quote</a>
+      <a href="transactions.html">Transactions</a>
+      <a href="agent.html">Agent</a>
+      <a href="verify.html">Verify</a>
+      <a href="docs.html">Docs</a>
+    </div>
+    <a class="btn btn-secondary btn-sm" href="https://github.com/deeeko/celo-naira-payout-agent">GitHub</a>
+    <button class="icon-btn menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="mobile-menu"><svg class="i"><use href="#i-menu"/></svg></button>
+    <div class="mobile-menu" id="mobile-menu" data-open="false">
+      <a href="index.html">Overview</a>
+      <a href="quote.html">Quote</a>
+      <a href="transactions.html">Transactions</a>
+      <a href="agent.html">Agent</a>
+      <a href="verify.html">Verify</a>
+      <a href="docs.html">Docs</a>
+    </div>
+  </nav>
+</div>
+<main>
+  <header class="page-head container">
+    <span class="eyebrow">Attribution check</span>
+    <h1 class="page-title">Verify a <em>transaction</em></h1>
+    <p class="lead">Paste any Celo transaction hash to see whether it carries this agent's tag. The check runs in your browser against Celo's public RPC.</p>
+  </header>
+
+  <div class="container">
+    <div class="grid-main">
+      <div class="stack">
+        <section class="card" aria-labelledby="check-h">
+          <div class="card-h"><h2 id="check-h">Check a transaction</h2></div>
+          <div class="card-b">
+            <form id="check-form" class="stack" novalidate>
+              <div class="field">
+                <label class="label" for="tx-input">Transaction hash</label>
+                <input class="input mono" id="tx-input" name="tx" type="text" inputmode="text" placeholder="0x…" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" aria-describedby="tx-hint">
+                <p class="hint" id="tx-hint" aria-live="polite">A 66-character hash starting with 0x.</p>
+              </div>
+              <div class="row" id="samples" aria-live="polite">
+                <span class="small muted" id="samples-label">Try one of the agent's:</span>
+                <span class="skel" style="width:96px;height:32px;border-radius:999px"></span>
+                <span class="skel" style="width:96px;height:32px;border-radius:999px"></span>
+                <span class="skel" style="width:96px;height:32px;border-radius:999px"></span>
+              </div>
+              <div class="row">
+                <button class="btn btn-primary" id="check-btn" type="submit"><svg class="i" aria-hidden="true"><use href="#i-search"/></svg>Check transaction</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <section class="card" id="result" aria-live="polite" aria-labelledby="result-h" hidden>
+          <div class="card-h"><h2 id="result-h">Result</h2><span id="result-hash" class="mono muted"></span></div>
+          <div class="card-b" id="result-body"></div>
+        </section>
+      </div>
+
+      <section class="card" aria-labelledby="how-h">
+        <div class="card-h"><h2 id="how-h">How the check works</h2></div>
+        <div class="card-b">
+          <ol class="how">
+            <li><b>Read.</b> Fetches the transaction's calldata with <code class="inline">eth_getTransactionByHash</code> from Celo's Forno RPC.</li>
+            <li><b>Find.</b> Looks for the ERC-8021 marker <code class="inline">0x8021…8021</code> at the very end of the calldata.</li>
+            <li><b>Decode.</b> Reads the length and schema bytes before the marker, then decodes the attribution codes.</li>
+          </ol>
+          <p class="small muted mt-16">This agent tags every transaction it sends with <code class="inline">celo_7360953d1b53</code>. The page only reads data; it cannot send or move funds.</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+<footer class="site-footer">
+  <div class="container">
+    <div class="cols">
+      <div>
+        <div class="foot-brand"><img src="logo.png" alt="" width="28" height="28">Naira Payout</div>
+        <p class="small soft" style="max-width:40ch">An agent that converts USD₮ to cNGN on Textile FX and pays an approved recipient on Celo.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+      </div>
+      <div>
+        <h4>Resources</h4>
+        <ul><li><a href="docs.html">Docs</a></li><li><a href="https://github.com/deeeko/celo-naira-payout-agent">Source code</a></li><li><a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e">Agent on Celoscan</a></li><li><a href="https://fx-docs.textilecredit.com">Textile FX docs</a></li></ul>
+      </div>
+    </div>
+    <div class="base"><span>Built for Agents Open for Business on Celo · Track 3: Stablecoin Corridors</span><span>Data: Celo Forno RPC · Blockscout · Textile FX</span></div>
+  </div>
+</footer>
+<script type="module" src="js/verify.js"></script>
+</body>
+</html>

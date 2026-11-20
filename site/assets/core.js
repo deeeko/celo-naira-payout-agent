@@ -1,0 +1,219 @@
+// Shared data + behaviour for every page. No libraries, no keys.
+// Celo RPC (Forno) and Blockscout are read straight from the browser. The Textile rate comes from
+// rate.json, refreshed every 30 min by a GitHub Action (Textile's rates feed blocks other sites).
+
+export const RPC = "https://forno.celo.org";
+export const EXPLORER_API = "https://celo.blockscout.com/api/v2";
+export const AGENT = "0x8a695cf54CB44753c8b784EB36d266f748617a1e";
+export const AGENT_ID = 10079n;
+export const REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
+export const TAG = "celo_7360953d1b53";
+export const TOKENS = {
+  USDT: { address: "0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e", symbol: "USD₮" },
+  cNGN: { address: "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f", symbol: "cNGN" },
+};
+export const CAP = 25;
+export const REPO = "https://github.com/deeeko/celo-naira-payout-agent";
+export const celoscanTx = (h) => `https://celoscan.io/tx/${h}`;
+export const celoscanAddr = (a) => `https://celoscan.io/address/${a}`;
+const MARKER = "80218021802180218021802180218021"; // ERC-8021 suffix marker
+
+// ---------- formatting ----------
+export const num2 = new Intl.NumberFormat("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export const naira = (n) => "₦" + num2.format(n);
+export const usd = (n) => "$" + num2.format(n);
+export const short = (a) => (a ? a.slice(0, 6) + "…" + a.slice(-4) : "");
+export const lagos = (d, opts) => new Date(d).toLocaleString("en-GB", { timeZone: "Africa/Lagos", ...opts });
+export const lagosTime = (d) => lagos(d, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+export const lagosClock = (d) => lagos(d, { hour: "2-digit", minute: "2-digit" });
+export const $ = (sel, root = document) => root.querySelector(sel);
+export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+// ---------- network ----------
+/** fetch JSON with a 12 s timeout and one retry on network errors, 429 and 5xx. */
+export async function getJson(url, init = {}, attempt = 0) {
+  try {
+    const r = await fetch(url, { ...init, signal: AbortSignal.timeout(12_000) });
+    if (r.status === 429 || r.status >= 500) throw Object.assign(new Error(`HTTP ${r.status}`), { retry: true });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } catch (e) {
+    const retryable = e.retry || e.name === "TypeError" || e.name === "TimeoutError" || e.name === "AbortError";
+    if (attempt === 0 && retryable) {
+      await new Promise((res) => setTimeout(res, 800));
+      return getJson(url, init, 1);
+    }
+    throw e;
+  }
+}
+export async function rpc(method, params) {
+  const j = await getJson(RPC, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+  if (j.error) throw new Error(j.error.message);
+  return j.result;
+}
+const pad = (hex) => hex.replace(/^0x/, "").padStart(64, "0");
+const call = (to, data) => rpc("eth_call", [{ to, data }, "latest"]);
+const hexBytes = (h) => new Uint8Array((h.match(/../g) ?? []).map((b) => parseInt(b, 16)));
+function decodeString(hex) {
+  const h = hex.replace(/^0x/, "");
+  const off = parseInt(h.slice(0, 64), 16) * 2;
+  const len = parseInt(h.slice(off, off + 64), 16) * 2;
+  return new TextDecoder().decode(hexBytes(h.slice(off + 64, off + 64 + len)));
+}
+const units = (hex, dec) => Number(BigInt(hex)) / 10 ** dec;
+
+/** ERC-8021 schema 0: [codes][len:1][schema:1][marker:16] at the very end of calldata. */
+export function decodeTag(input) {
+  const h = (input ?? "").toLowerCase().replace(/^0x/, "");
+  if (!h.endsWith(MARKER)) return null;
+  const body = h.slice(0, -MARKER.length);
+  const schema = parseInt(body.slice(-2), 16);
+  if (schema !== 0) return { schema, codes: [] };
+  const len = parseInt(body.slice(-4, -2), 16);
+  const text = new TextDecoder().decode(hexBytes(body.slice(-4 - len * 2, -4)));
+  return { schema: 0, codes: text.split(",") };
+}
+export const isTagged = (tx) => !!decodeTag(tx.raw_input ?? tx.input)?.codes?.includes(TAG);
+
+/** { rate, fromPreview, fetchedAt, ageMin, stale, previewUsd, ticker } — throws if no rate. */
+export async function loadRate() {
+  const d = await getJson("rate.json", { cache: "no-store" });
+  const fromPreview = Number(d.effectiveRate) > 0;
+  const rate = fromPreview ? Number(d.effectiveRate) : Number(d.ticker?.bid);
+  if (!(rate > 0)) throw new Error("no rate");
+  const ageMin = Math.max(0, Math.round((Date.now() - Date.parse(d.fetchedAt)) / 60000));
+  return { rate, fromPreview, fetchedAt: d.fetchedAt, ageMin, stale: !!d.stale || ageMin > 120, previewUsd: d.previewUsd ?? 10, ticker: d.ticker ?? null };
+}
+
+/** { ok, owner, file, uri } — owner check + decoded ERC-8004 registration file. */
+export async function loadIdentity() {
+  const id = pad(AGENT_ID.toString(16));
+  const owner = "0x" + (await call(REGISTRY, "0x6352211e" + id)).slice(-40);
+  const uri = decodeString(await call(REGISTRY, "0xc87b56dd" + id));
+  let file = null;
+  if (uri.startsWith("data:application/json;base64,")) {
+    const bin = atob(uri.slice(uri.indexOf(",") + 1));
+    file = JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0))));
+  }
+  return { ok: owner.toLowerCase() === AGENT.toLowerCase(), owner, file, uri };
+}
+
+/** { celo, usdt, cngn } as numbers. */
+export async function loadBalances() {
+  const bal = (t) => call(t, "0x70a08231" + pad(AGENT));
+  const dec = async (t) => parseInt(await call(t, "0x313ce567"), 16);
+  const [celo, usdt, cngn, dU, dN] = await Promise.all([
+    rpc("eth_getBalance", [AGENT, "latest"]), bal(TOKENS.USDT.address), bal(TOKENS.cNGN.address), dec(TOKENS.USDT.address), dec(TOKENS.cNGN.address),
+  ]);
+  return { celo: units(celo, 18), usdt: units(usdt, dU), cngn: units(cngn, dN) };
+}
+
+/** One page of the agent's outgoing transactions: { items, next } (next = params for the following page or null). */
+export async function loadTxPage(next = null) {
+  const qs = new URLSearchParams({ filter: "from", ...(next ?? {}) });
+  const d = await getJson(`${EXPLORER_API}/addresses/${AGENT}/transactions?${qs}`);
+  if (!Array.isArray(d.items)) throw new Error("unexpected explorer response");
+  const items = d.items.filter((t) => t.from?.hash?.toLowerCase() === AGENT.toLowerCase());
+  return { items, next: d.next_page_params ?? null };
+}
+
+/** Any Celo transaction by hash, via RPC: { hash, from, to, input, status, blockNumber, timestamp } or null. */
+export async function loadTxByHash(hash) {
+  const [tx, receipt] = await Promise.all([rpc("eth_getTransactionByHash", [hash]), rpc("eth_getTransactionReceipt", [hash])]);
+  if (!tx) return null;
+  let timestamp = null;
+  if (tx.blockNumber) {
+    const block = await rpc("eth_getBlockByNumber", [tx.blockNumber, false]);
+    timestamp = block ? Number(BigInt(block.timestamp)) * 1000 : null;
+  }
+  return { hash: tx.hash, from: tx.from, to: tx.to, input: tx.input, status: receipt ? (receipt.status === "0x1" ? "ok" : "error") : "pending", blockNumber: tx.blockNumber ? Number(BigInt(tx.blockNumber)) : null, timestamp };
+}
+
+// ---------- transaction meaning ----------
+/** "identity" | "approve" | "convert" | "payout" | "other" */
+export function txKind(tx) {
+  const to = tx.to?.hash?.toLowerCase();
+  if (to === REGISTRY.toLowerCase()) return "identity";
+  if (to === TOKENS.cNGN.address.toLowerCase() && tx.method === "transfer") return "payout";
+  if (to === TOKENS.USDT.address.toLowerCase() && tx.method === "approve") return "approve";
+  if (tx.token_transfers || /execute/i.test(tx.method ?? "")) return "convert";
+  return "other";
+}
+export function txLabel(tx) {
+  switch (txKind(tx)) {
+    case "identity": return tx.method === "register" ? "Registered identity" : tx.method === "setAgentURI" ? "Updated identity file" : "Updated identity";
+    case "payout": return "Paid cNGN to recipient";
+    case "approve": return /0{64}$/.test((tx.raw_input ?? "").slice(0, 138)) ? "Reset USD₮ allowance" : "Approved USD₮ for Textile";
+    case "convert": return "Converted USD₮ → cNGN";
+    default: return tx.method ? `Called ${tx.method}` : "Other transaction";
+  }
+}
+export function txStatus(tx) {
+  return tx.status === "ok" ? ["Success", "ok"] : tx.status === "error" ? ["Failed", "err"] : ["Pending", "warn"];
+}
+
+// ---------- DOM helpers ----------
+export function el(tag, attrs = {}, ...children) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v == null || v === false) continue;
+    if (k === "class") n.className = v;
+    else if (k === "dataset") Object.assign(n.dataset, v);
+    else n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) if (c != null) n.append(c);
+  return n;
+}
+export const badge = (text, kind = "neutral") => el("span", { class: `badge ${kind}` }, text);
+export const icon = (name, cls = "i") => {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", cls);
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(ns, "use");
+  use.setAttribute("href", `#i-${name}`);
+  svg.append(use);
+  return svg;
+};
+
+let toastTimer;
+export function toast(message) {
+  let t = document.getElementById("toast");
+  if (!t) { t = el("div", { id: "toast", class: "toast", role: "status", "aria-live": "polite" }); document.body.append(t); }
+  t.textContent = message;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 1600);
+}
+export async function copyText(text, label = "Copied") {
+  try { await navigator.clipboard.writeText(text); toast(label); } catch { toast("Copy failed. Select and copy manually."); }
+}
+export function download(filename, text, type = "text/csv") {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = el("a", { href: url, download: filename });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ---------- page chrome: nav, mobile menu, copy buttons ----------
+export function initChrome() {
+  const here = location.pathname.split("/").pop() || "index.html";
+  for (const a of document.querySelectorAll(".nav-links a, .mobile-menu a")) {
+    if (a.getAttribute("href") === here) a.setAttribute("aria-current", "page");
+  }
+  const btn = document.querySelector(".menu-btn");
+  const menu = document.querySelector(".mobile-menu");
+  if (btn && menu) {
+    const set = (open) => { menu.dataset.open = String(open); btn.setAttribute("aria-expanded", String(open)); };
+    btn.addEventListener("click", () => set(menu.dataset.open !== "true"));
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") set(false); });
+    document.addEventListener("click", (e) => { if (!menu.contains(e.target) && !btn.contains(e.target)) set(false); });
+  }
+  // any element with data-copy="text" copies that text on click
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-copy]");
+    if (b) copyText(b.dataset.copy, b.dataset.copyLabel ?? "Copied");
+  });
+  const y = document.getElementById("year");
+  if (y) y.textContent = String(new Date().getFullYear());
+}
