@@ -1,26 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Naira Payout">
+  <!-- Naira on Celo rails: a green naira N; the two bars of ₦ are Celo-yellow rails that pass
+       behind the N and run out through the right edge of the tile. -->
   <defs>
-    <!-- tile body: mint top-left to deep naira green bottom-right -->
     <linearGradient id="np-bg" gradientUnits="userSpaceOnUse" x1="96" y1="0" x2="416" y2="512">
-      <stop offset="0" stop-color="#52EDA7"/>
+      <stop offset="0" stop-color="#2FD98B"/>
       <stop offset=".5" stop-color="#00A862"/>
-      <stop offset="1" stop-color="#005E38"/>
+      <stop offset="1" stop-color="#005433"/>
     </linearGradient>
-    <!-- glossy light from the top-left -->
-    <radialGradient id="np-shine" gradientUnits="userSpaceOnUse" cx="150" cy="40" r="380">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".42"/>
+    <radialGradient id="np-shine" gradientUnits="userSpaceOnUse" cx="140" cy="30" r="390">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".38"/>
       <stop offset=".6" stop-color="#FFFFFF" stop-opacity="0"/>
     </radialGradient>
-    <!-- bevel: light top rim, dark bottom rim -->
     <linearGradient id="np-rim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".7"/>
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".65"/>
       <stop offset=".45" stop-color="#FFFFFF" stop-opacity="0"/>
-      <stop offset="1" stop-color="#00321E" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#00301C" stop-opacity=".55"/>
     </linearGradient>
-    <!-- glyph: white, cooling to pale mint at the base -->
+    <!-- Celo yellow rails: brightest where they leave the tile -->
+    <linearGradient id="np-rail" gradientUnits="userSpaceOnUse" x1="96" y1="0" x2="512" y2="0">
+      <stop offset="0" stop-color="#F2F548"/>
+      <stop offset="1" stop-color="#FCFF52"/>
+    </linearGradient>
     <linearGradient id="np-ink" gradientUnits="userSpaceOnUse" x1="0" y1="140" x2="0" y2="372">
       <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#DDFBEB"/>
+      <stop offset="1" stop-color="#E4FBEF"/>
     </linearGradient>
     <filter id="np-lift" x="-25%" y="-25%" width="150%" height="150%">
       <feDropShadow dx="0" dy="9" stdDeviation="11" flood-color="#00301C" flood-opacity=".5"/>
@@ -30,19 +33,16 @@
 
   <g clip-path="url(#np-tile)">
     <rect width="512" height="512" fill="url(#np-bg)"/>
-
-    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-      <!-- the two lanes of the corridor (the bars of ₦), drawn behind the N -->
-      <g filter="url(#np-lift)" stroke="url(#np-ink)" stroke-width="28">
-        <path d="M96 226H416"/>
-        <path d="M96 288H416"/>
+    <g fill="none" stroke-linejoin="round">
+      <!-- rails: start inside the N (hidden behind the left stem) and run out through the right edge -->
+      <g filter="url(#np-lift)" stroke="url(#np-rail)" stroke-width="30" stroke-linecap="round">
+        <path d="M156 226H560"/>
+        <path d="M156 290H560"/>
       </g>
-      <!-- knockout: a hairline channel in the tile colour so the lanes pass behind the N -->
-      <path d="M156 362V150L356 362V150" stroke="url(#np-bg)" stroke-width="74"/>
-      <!-- the N -->
-      <path filter="url(#np-lift)" d="M156 362V150L356 362V150" stroke="url(#np-ink)" stroke-width="56"/>
+      <!-- hairline channel so the rails pass behind the N -->
+      <path d="M156 362V150L356 362V150" stroke="url(#np-bg)" stroke-width="76" stroke-linecap="round"/>
+      <path filter="url(#np-lift)" d="M156 362V150L356 362V150" stroke="url(#np-ink)" stroke-width="56" stroke-linecap="round"/>
     </g>
-
     <rect width="512" height="512" fill="url(#np-shine)"/>
   </g>
   <rect x="3" y="3" width="506" height="506" rx="113" fill="none" stroke="url(#np-rim)" stroke-width="6"/>

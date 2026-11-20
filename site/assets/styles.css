@@ -24,6 +24,11 @@
   --warn: #ffcc7a;
   --err: #ff8f80;
   --on-light: #07120c;
+  /* Celo yellow: the brand accent (primary actions, the one accent word, eyebrows, the rails in the logo).
+     Green/mint stay for live data and success states, so each colour has one job. */
+  --celo: #fcff52;
+  --celo-hover: #f0f33c;
+  --on-celo: #0b0f00;
 
   /* type */
   --sans: "General Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -63,7 +68,7 @@ img, svg { display: block; }
 h1, h2, h3, h4 { margin: 0; font-weight: 500; letter-spacing: -0.02em; text-wrap: balance; }
 p { margin: 0; text-wrap: pretty; }
 :focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; border-radius: 8px; }
-::selection { background: rgba(111, 240, 176, .3); }
+::selection { background: var(--celo); color: var(--on-celo); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 svg.i { width: 16px; height: 16px; flex: none; display: inline-block; vertical-align: -3px; }
 svg.i-lg { width: 20px; height: 20px; }
@@ -79,7 +84,7 @@ svg.i-lg { width: 20px; height: 20px; }
 .mint { color: var(--mint); }
 .link { color: var(--mint); }
 .link:hover { text-decoration: underline; text-underline-offset: 3px; }
-.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-micro); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--mint); }
+.eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: var(--fs-micro); font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--celo); }
 .stack { display: grid; gap: 18px; }
 .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .between { justify-content: space-between; }
@@ -97,7 +102,8 @@ svg.i-lg { width: 20px; height: 20px; }
     radial-gradient(42% 38% at 22% 18%, rgba(111, 240, 176, .55), transparent 70%),
     radial-gradient(55% 45% at 45% 26%, rgba(0, 168, 98, .75), transparent 72%),
     radial-gradient(60% 50% at 80% 10%, rgba(0, 81, 47, .9), transparent 70%),
-    radial-gradient(70% 40% at 50% 62%, rgba(0, 120, 70, .35), transparent 75%);
+    radial-gradient(70% 40% at 50% 62%, rgba(0, 120, 70, .35), transparent 75%),
+    radial-gradient(28% 24% at 86% 8%, rgba(252, 255, 82, .40), transparent 72%);
   filter: blur(30px) saturate(115%);
   animation: sky-drift 24s ease-in-out infinite alternate;
 }
@@ -142,8 +148,8 @@ svg.i-lg { width: 20px; height: 20px; }
 }
 .btn:active { transform: scale(.98); }
 .btn[disabled] { opacity: .5; cursor: not-allowed; }
-.btn-primary { background: #fff; color: var(--on-light); }
-.btn-primary:hover { background: #e6f7ee; }
+.btn-primary { background: var(--celo); color: var(--on-celo); }
+.btn-primary:hover { background: var(--celo-hover); }
 .btn-secondary { background: var(--surface-2); color: var(--text); border-color: var(--line); }
 .btn-secondary:hover { background: var(--surface-3); }
 .btn-ghost { background: transparent; color: var(--text-2); }
@@ -162,7 +168,7 @@ svg.i-lg { width: 20px; height: 20px; }
 .hero { position: relative; z-index: 1; text-align: center; padding: clamp(80px, 13vw, 140px) var(--gutter) clamp(56px, 8vw, 96px); }
 .hero .tile { margin: 0 auto 32px; }
 .display { font-size: var(--fs-display); font-weight: 300; line-height: 1.02; letter-spacing: -0.035em; max-width: 14ch; margin: 0 auto; }
-.display em, .page-title em { font-family: var(--serif); font-style: italic; font-weight: 500; letter-spacing: -0.01em; }
+.display em, .page-title em { font-family: var(--serif); font-style: italic; font-weight: 500; letter-spacing: -0.01em; color: var(--celo); }
 .lead { font-size: clamp(16px, 1.6vw, 19px); color: var(--text-2); max-width: 48ch; margin: 20px auto 0; }
 .hero .actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 30px; }
 
@@ -229,7 +235,7 @@ svg.i-lg { width: 20px; height: 20px; }
 .segmented { display: inline-flex; gap: 4px; padding: 4px; border-radius: var(--r-pill); background: rgba(0,0,0,.28); border: 1px solid var(--line); flex-wrap: wrap; }
 .segmented button { font: 500 13.5px/1 var(--sans); color: var(--text-2); background: transparent; border: 0; padding: 9px 14px; border-radius: var(--r-pill); cursor: pointer; transition: background-color 120ms ease, color 120ms ease; }
 .segmented button:hover { color: var(--text); }
-.segmented button[aria-pressed="true"] { background: #fff; color: var(--on-light); }
+.segmented button[aria-pressed="true"] { background: var(--celo); color: var(--on-celo); }
 .toggle { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: var(--fs-small); color: var(--text-2); }
 .toggle input { width: 18px; height: 18px; accent-color: var(--green); }
 
