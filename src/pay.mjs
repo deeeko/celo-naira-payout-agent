@@ -4,7 +4,7 @@ import fs from "node:fs";
 import readline from "node:readline/promises";
 import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { verifyTx } from "@celo/attribution-tags";
-import { CONTACTS_FILE, IDENTITY_REGISTRY, LOG_FILE, MAX_SLIPPAGE_BPS, MAX_USD, TOKENS } from "./config.mjs";
+import { ATTRIBUTION_CODE, CONTACTS_FILE, IDENTITY_REGISTRY, LOG_FILE, MAX_SLIPPAGE_BPS, MAX_USD, TOKENS } from "./config.mjs";
 import { loadAccount, makeClients } from "./chain.mjs";
 import { assertRecipient, assertSlippage, assertWithinCap, parseContacts, parseUsd, resolveContact } from "./guards.mjs";
 import { firmQuote, preview, submit } from "./textile.mjs";
@@ -104,8 +104,13 @@ export async function pay({ to, amount, execute = false, yes = false }) {
   // 5. Prove every transaction carries our attribution tag.
   const tags = {};
   for (const [k, h] of Object.entries(hashes)) tags[k] = (await verifyTx({ client: pub, hash: h }))?.codes ?? null;
-  log({ to, recipient, usdtSpent: formatUnits(takerPays, 6), cngnPaid: formatUnits(received, cngnDecimals), hashes, tags });
+  const untagged = Object.keys(hashes).filter((k) => !tags[k]?.includes(ATTRIBUTION_CODE));
+  log({ to, recipient, usdtSpent: formatUnits(takerPays, 6), cngnPaid: formatUnits(received, cngnDecimals), hashes, tags, untagged });
   console.log(`Paid ${formatUnits(received, cngnDecimals)} cNGN to ${to}.`);
   for (const [k, h] of Object.entries(hashes)) console.log(`  ${k}: https://celoscan.io/tx/${h}  tag=${JSON.stringify(tags[k])}`);
-  return { hashes, tags };
+  if (untagged.length) {
+    console.error(`WARNING: missing attribution tag ${ATTRIBUTION_CODE} on: ${untagged.join(", ")}. These will not be credited.`);
+    process.exitCode = 1;
+  }
+  return { hashes, tags, untagged };
 }
