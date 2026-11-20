@@ -77,7 +77,9 @@ src/agent.mjs         command line
 
 - [x] Agent built, 8 unit tests passing
 - [x] Live Textile price preview on Celo mainnet works
-- [ ] ERC-8004 identity registered
+- [x] ERC-8004 identity registered on Celo mainnet: agentId 10079, tags verified on-chain
+  ([register](https://celoscan.io/tx/0x080d54275f02a722a3b0daa408f02a1af760e29f9e39092a9a48d22b964cf62e),
+  [update URI](https://celoscan.io/tx/0x4a342d9d0c7417211839b75edf7a9343e461b3dbe101aa39e53e14a09e7df309))
 - [ ] Tagged mainnet run: USD₮ to cNGN to a named recipient
 - [ ] Named user and what they used it for
 
