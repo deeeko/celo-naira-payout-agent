@@ -195,20 +195,88 @@ export function download(filename, text, type = "text/csv") {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-// ---------- page chrome: nav, mobile menu, copy buttons ----------
+// ---------- page chrome: nav, sidebar, copy buttons ----------
+const SB_KEY = "np-sidebar";
+const store = {
+  get() { try { return localStorage.getItem(SB_KEY); } catch { return null; } },
+  set(v) { try { localStorage.setItem(SB_KEY, v); } catch { /* storage blocked: state just isn't remembered */ } },
+};
+const desktop = () => matchMedia("(min-width: 1100px)").matches;
+
+function initSidebar() {
+  const root = document.documentElement;
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+  const scrim = document.querySelector(".sb-scrim");
+  const menuBtn = document.querySelector(".menu-btn");
+  const collapseBtn = sidebar.querySelector(".sb-collapse");
+  const closeBtn = sidebar.querySelector(".sb-close");
+
+  // desktop rail / expanded (remembered)
+  const setRail = (rail) => {
+    root.dataset.sb = rail ? "rail" : "open";
+    collapseBtn?.setAttribute("aria-expanded", String(!rail));
+    collapseBtn?.setAttribute("aria-label", rail ? "Expand sidebar" : "Collapse sidebar");
+    store.set(rail ? "rail" : "open");
+  };
+  root.dataset.sb = store.get() === "rail" ? "rail" : "open";
+  collapseBtn?.setAttribute("aria-expanded", String(root.dataset.sb !== "rail"));
+  collapseBtn?.setAttribute("aria-label", root.dataset.sb === "rail" ? "Expand sidebar" : "Collapse sidebar");
+  collapseBtn?.addEventListener("click", () => setRail(root.dataset.sb !== "rail"));
+
+  // mobile/tablet drawer
+  let lastFocus = null;
+  const openDrawer = () => {
+    lastFocus = document.activeElement;
+    root.dataset.drawer = "open";
+    menuBtn?.setAttribute("aria-expanded", "true");
+    sidebar.setAttribute("aria-modal", "true");
+    sidebar.setAttribute("role", "dialog");
+    requestAnimationFrame(() => sidebar.querySelector(".sb-nav a")?.focus());
+  };
+  const closeDrawer = () => {
+    if (root.dataset.drawer !== "open") return;
+    delete root.dataset.drawer;
+    menuBtn?.setAttribute("aria-expanded", "false");
+    sidebar.removeAttribute("aria-modal");
+    sidebar.removeAttribute("role");
+    lastFocus?.focus?.();
+  };
+  menuBtn?.addEventListener("click", () => (root.dataset.drawer === "open" ? closeDrawer() : openDrawer()));
+  closeBtn?.addEventListener("click", closeDrawer);
+  scrim?.addEventListener("click", closeDrawer);
+  sidebar.addEventListener("click", (e) => { if (e.target.closest(".sb-nav a") && !desktop()) closeDrawer(); });
+  addEventListener("resize", () => { if (desktop()) closeDrawer(); });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") return closeDrawer();
+    // "[" toggles the rail on desktop (ignored while typing)
+    if (e.key === "[" && desktop() && !e.metaKey && !e.ctrlKey && !e.altKey && !e.target.closest("input, textarea, select, [contenteditable]")) {
+      setRail(root.dataset.sb !== "rail");
+    }
+    // keep Tab inside the open drawer
+    if (e.key === "Tab" && root.dataset.drawer === "open") {
+      const f = [...sidebar.querySelectorAll("a[href], button:not([disabled])")].filter((n) => n.offsetParent !== null);
+      if (!f.length) return;
+      if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f.at(-1).focus(); }
+      else if (!e.shiftKey && document.activeElement === f.at(-1)) { e.preventDefault(); f[0].focus(); }
+    }
+  });
+
+  // live status card
+  const rateEl = document.getElementById("sb-rate");
+  if (rateEl) loadRate().then((r) => { rateEl.textContent = `1 USD₮ = ${naira(r.rate)}`; }).catch(() => { rateEl.textContent = "Rate unavailable"; });
+
+  // enable transitions only after the first paint, so the remembered state doesn't animate in
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add("sb-ready")));
+}
+
 export function initChrome() {
   const here = location.pathname.split("/").pop() || "index.html";
-  for (const a of document.querySelectorAll(".nav-links a, .mobile-menu a")) {
+  for (const a of document.querySelectorAll(".nav-links a, .sb-nav a")) {
     if (a.getAttribute("href") === here) a.setAttribute("aria-current", "page");
   }
-  const btn = document.querySelector(".menu-btn");
-  const menu = document.querySelector(".mobile-menu");
-  if (btn && menu) {
-    const set = (open) => { menu.dataset.open = String(open); btn.setAttribute("aria-expanded", String(open)); };
-    btn.addEventListener("click", () => set(menu.dataset.open !== "true"));
-    document.addEventListener("keydown", (e) => { if (e.key === "Escape") set(false); });
-    document.addEventListener("click", (e) => { if (!menu.contains(e.target) && !btn.contains(e.target)) set(false); });
-  }
+  initSidebar();
   // any element with data-copy="text" copies that text on click
   document.addEventListener("click", (e) => {
     const b = e.target.closest("[data-copy]");
