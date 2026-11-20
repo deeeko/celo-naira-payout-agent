@@ -431,6 +431,23 @@ export function download(filename, text, type = "text/csv") {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// ---------- wallet disconnect ----------
+// A site can't force an injected wallet to disconnect. "Disconnect" therefore (1) asks the wallet to revoke this
+// site's access (EIP-2255 wallet_revokePermissions; MetaMask supports it, some wallets ignore it) and (2) marks the
+// wallet as disconnected for this browser tab so pages don't silently reconnect via eth_accounts.
+const WALLET_OFF = "np-wallet-off";
+export function walletDisconnected() { try { return sessionStorage.getItem(WALLET_OFF) === "1"; } catch { return false; } }
+export function markWalletConnected() { try { sessionStorage.removeItem(WALLET_OFF); } catch { /* storage blocked */ } }
+/** Returns true if the wallet confirmed it revoked this site's access, false if it only disconnected on the page. */
+export async function disconnectWallet(eth) {
+  try { sessionStorage.setItem(WALLET_OFF, "1"); } catch { /* storage blocked */ }
+  if (!eth?.request) return false;
+  try { await eth.request({ method: "wallet_revokePermissions", params: [{ eth_accounts: {} }] }); return true; }
+  catch { return false; }
+}
+export const DISCONNECT_NOTE_PARTIAL = "Disconnected on this page. To remove this site's access completely, also disconnect it in your wallet's \"Connected sites\" settings.";
+export const DISCONNECT_NOTE_FULL = "Disconnected. This site no longer has access to your wallet.";
+
 // ---------- page chrome: nav, sidebar, copy buttons ----------
 // ---------- privacy consent ----------
 // No cookies, no analytics, fonts are self-hosted. The only OPTIONAL thing is remembering layout

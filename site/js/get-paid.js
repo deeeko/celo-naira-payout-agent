@@ -1,6 +1,7 @@
 import {
   AGENT, CAP, CORRIDORS, TOKENS, $, $$, el, icon, badge, naira, num2, short, lagosTime, celoscanTx, celoscanAddr,
   rpc, loadRate, loadReceipt, loadRegistrations, registrationStatuses, encodeRegistration, initChrome,
+  disconnectWallet, walletDisconnected, markWalletConnected, DISCONNECT_NOTE_FULL, DISCONNECT_NOTE_PARTIAL, toast,
 } from "../assets/core.js";
 
 initChrome();
@@ -246,7 +247,8 @@ function renderWallet() {
   const parts = [el("ul", { class: "kv-list" },
     el("li", {}, el("span", {}, "Paid to"), el("span", { class: "row", style: "justify-content:flex-end;gap:8px" }, walletLink,
       el("button", { class: "icon-btn sm", type: "button", "aria-label": "Copy wallet address", dataset: { copy: state.account, copyLabel: "Address copied" } }, icon("copy")))),
-    el("li", {}, el("span", {}, "Network"), net))];
+    el("li", {}, el("span", {}, "Network"), net)),
+    el("div", { class: "row mt-8" }, disconnectBtn())];
   if (sameAddr(state.account, AGENT)) {
     parts.push(alertBox("err", "alert", el("p", {}, "This is the agent's own wallet. It can't create a link to pay itself. Connect your own wallet.")));
   } else if (state.lowGas) {
@@ -256,6 +258,18 @@ function renderWallet() {
   walletBox.replaceChildren(...parts);
   setText($("#s-wallet"), short(state.account));
   $("#s-wallet").title = state.account;
+}
+function disconnectBtn() {
+  const d = el("button", { class: "btn btn-ghost btn-sm", type: "button", "aria-label": "Disconnect wallet" }, icon("x"), "Disconnect");
+  d.addEventListener("click", async () => {
+    if (state.busy) return; // never mid-send
+    d.disabled = true;
+    const revoked = await disconnectWallet(eth);
+    await setAccount(null);
+    toast("Wallet disconnected");
+    showMsg(alertBox("", "info", el("p", {}, revoked ? DISCONNECT_NOTE_FULL : DISCONNECT_NOTE_PARTIAL)));
+  });
+  return d;
 }
 function switchBtn() {
   const s = el("button", { class: "btn btn-ghost btn-sm", type: "button" }, "Switch to Celo");
@@ -347,6 +361,7 @@ async function connect() {
   btn.disabled = true;
   btn.textContent = "Check your wallet…";
   showMsg();
+  markWalletConnected(); // an explicit Connect click undoes an earlier Disconnect
   try {
     const accs = await eth.request({ method: "eth_requestAccounts" });
     if (!accs?.length) throw new Error("The wallet returned no account.");
@@ -520,7 +535,11 @@ hoursIn.addEventListener("blur", () => { state.touched.add("hours"); renderExpir
 $("#again").addEventListener("click", resetForm);
 
 if (eth?.on) {
-  eth.on("accountsChanged", (accs) => { if (!state.busy) setAccount(accs?.[0] ?? null); });
+  eth.on("accountsChanged", (accs) => {
+    if (state.busy) return;
+    if (walletDisconnected() && !state.account) return; // the user disconnected: don't let wallet events reconnect
+    setAccount(accs?.[0] ?? null);
+  });
   eth.on("chainChanged", (id) => { state.chainOk = String(id).toLowerCase() === CELO_CHAIN; if (state.account) renderWallet(); });
 }
 
@@ -537,4 +556,4 @@ loadRate().then((r) => { state.rate = r; update(); }).catch(() => {
 });
 refreshRegs();
 // already connected (no prompt): eth_accounts only lists accounts the user approved before
-if (eth) eth.request({ method: "eth_accounts" }).then((accs) => { if (accs?.[0] && !state.account) setAccount(accs[0]); }).catch(() => {});
+if (eth && !walletDisconnected()) eth.request({ method: "eth_accounts" }).then((accs) => { if (accs?.[0] && !state.account) setAccount(accs[0]); }).catch(() => {});

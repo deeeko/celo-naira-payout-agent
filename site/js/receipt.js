@@ -5,6 +5,7 @@ import {
   txKind, txLabel, txStatus, receiptNo, parseReceiptNo,
   tokenSymbol, units6, encodeCall, tagSuffix, loadIdentity, copyText, toast, initChrome,
 } from "../assets/core.js";
+import { disconnectWallet, markWalletConnected, DISCONNECT_NOTE_FULL, DISCONNECT_NOTE_PARTIAL, toast as toastMsg } from "../assets/core.js";
 
 initChrome();
 
@@ -676,7 +677,7 @@ let rateUrl = "";
 let stars = 0;
 let rateSeq = 0;
 
-function renderRate(url) {
+function renderRate(url, notice) {
   rateUrl = url;
   rateCard.hidden = false;
   const intro = el("p", { class: "soft small" }, "Paid through this agent? Rate the payout on the agent's public ERC-8004 reputation record. The rating is a transaction from your own wallet, which you approve there.");
@@ -690,9 +691,11 @@ function renderRate(url) {
   if (account) return renderRateForm();
   const connect = el("button", { class: "btn btn-secondary", type: "button" }, "Connect wallet");
   const msg = el("div", { "aria-live": "polite" });
+  if (notice) msg.replaceChildren(alertBox("", "info", el("p", {}, notice)));
   connect.addEventListener("click", async () => {
     connect.disabled = true;
     msg.replaceChildren();
+    markWalletConnected();
     try {
       const accs = await eth.request({ method: "eth_requestAccounts" });
       if (!accs?.length) throw new Error("The wallet returned no account.");
@@ -741,10 +744,20 @@ function renderRateForm() {
     group.append(b);
   }
   send.addEventListener("click", () => submit(send, result));
+  const disconnect = el("button", { class: "btn btn-ghost btn-sm", type: "button", "aria-label": "Disconnect wallet" }, icon("x"), "Disconnect");
+  disconnect.addEventListener("click", async () => {
+    if (send.textContent !== "Send rating" && send.disabled && !send.dataset.blocked) return; // a rating is being sent
+    disconnect.disabled = true;
+    const revoked = await disconnectWallet(window.ethereum);
+    account = null;
+    rateSeq++;
+    toastMsg("Wallet disconnected");
+    renderRate(rateUrl, revoked ? DISCONNECT_NOTE_FULL : DISCONNECT_NOTE_PARTIAL);
+  });
 
   rateBody.replaceChildren(
     el("ul", { class: "kv-list" },
-      kv("Wallet", addrLink(account)),
+      kv("Wallet", el("span", { class: "row", style: "justify-content:flex-end;gap:8px" }, addrLink(account), disconnect)),
       kv("Payer check", payerCell)),
     payerNote,
     ownerNote,
