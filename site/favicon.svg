@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- small-size mark: flat tile, heavier strokes, no knockouts or gloss (they blur below 32px) -->
+  <rect width="64" height="64" rx="15" fill="#00A862"/>
+  <g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 28H54M10 36.5H54" stroke-width="4.2"/>
+    <path d="M19.5 46V18L44.5 46V18" stroke-width="7.5"/>
+  </g>
+</svg>

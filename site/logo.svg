@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Naira Payout">
+  <defs>
+    <!-- tile body: mint top-left to deep naira green bottom-right -->
+    <linearGradient id="np-bg" gradientUnits="userSpaceOnUse" x1="96" y1="0" x2="416" y2="512">
+      <stop offset="0" stop-color="#52EDA7"/>
+      <stop offset=".5" stop-color="#00A862"/>
+      <stop offset="1" stop-color="#005E38"/>
+    </linearGradient>
+    <!-- glossy light from the top-left -->
+    <radialGradient id="np-shine" gradientUnits="userSpaceOnUse" cx="150" cy="40" r="380">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".42"/>
+      <stop offset=".6" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <!-- bevel: light top rim, dark bottom rim -->
+    <linearGradient id="np-rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".7"/>
+      <stop offset=".45" stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#00321E" stop-opacity=".55"/>
+    </linearGradient>
+    <!-- glyph: white, cooling to pale mint at the base -->
+    <linearGradient id="np-ink" gradientUnits="userSpaceOnUse" x1="0" y1="140" x2="0" y2="372">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DDFBEB"/>
+    </linearGradient>
+    <filter id="np-lift" x="-25%" y="-25%" width="150%" height="150%">
+      <feDropShadow dx="0" dy="9" stdDeviation="11" flood-color="#00301C" flood-opacity=".5"/>
+    </filter>
+    <clipPath id="np-tile"><rect width="512" height="512" rx="116"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#np-tile)">
+    <rect width="512" height="512" fill="url(#np-bg)"/>
+
+    <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <!-- the two lanes of the corridor (the bars of ₦), drawn behind the N -->
+      <g filter="url(#np-lift)" stroke="url(#np-ink)" stroke-width="28">
+        <path d="M96 226H416"/>
+        <path d="M96 288H416"/>
+      </g>
+      <!-- knockout: a hairline channel in the tile colour so the lanes pass behind the N -->
+      <path d="M156 362V150L356 362V150" stroke="url(#np-bg)" stroke-width="74"/>
+      <!-- the N -->
+      <path filter="url(#np-lift)" d="M156 362V150L356 362V150" stroke="url(#np-ink)" stroke-width="56"/>
+    </g>
+
+    <rect width="512" height="512" fill="url(#np-shine)"/>
+  </g>
+  <rect x="3" y="3" width="506" height="506" rx="113" fill="none" stroke="url(#np-rim)" stroke-width="6"/>
+</svg>
