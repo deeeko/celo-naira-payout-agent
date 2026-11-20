@@ -1,4 +1,4 @@
-import { AGENT, AGENT_ID, CAP, $, el, badge, icon, naira, short, lagosTime, lagosClock, celoscanTx, celoscanAddr, loadRate, loadIdentity, loadTxPage, isTagged, txKind, txLabel, initChrome } from "../assets/core.js";
+import { AGENT, AGENT_ID, CAP, $, el, badge, icon, naira, short, lagosTime, lagosClock, celoscanTx, celoscanAddr, loadRate, loadIdentity, loadTxPage, receiptNo, isTagged, txKind, txLabel, initChrome } from "../assets/core.js";
 
 initChrome();
 
@@ -76,16 +76,21 @@ loadIdentity().then((id) => {
 // ---------- transactions + activity ----------
 const activity = $("#activity");
 
+const HASH_RE = /^0x[0-9a-f]{64}$/i;
+
 function activityRow(tx) {
   const tagged = isTagged(tx);
+  const hash = String(tx.hash ?? "");
+  const no = HASH_RE.test(hash) ? receiptNo(hash) : null;
   return el("li", {},
     el("span", {},
       el("span", { class: "soft", style: "display:block" }, txLabel(tx)),
       el("span", { class: "micro" }, tx.timestamp ? lagosTime(tx.timestamp) + " WAT" : "Pending"),
     ),
-    el("span", { class: "row", style: "justify-content:flex-end;gap:8px" },
+    el("span", { class: "row", style: "justify-content:flex-end;gap:8px;flex-wrap:wrap" },
       badge(tagged ? "Tagged" : "No tag", tagged ? "ok" : "neutral"),
       el("a", { class: "link mono", href: celoscanTx(tx.hash), "aria-label": `Transaction ${tx.hash} on Celoscan` }, short(tx.hash)),
+      no ? el("a", { class: "link", href: `receipt.html#${no}`, "aria-label": `Receipt ${no}`, title: no }, "Receipt") : null,
     ),
   );
 }

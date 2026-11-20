@@ -32,6 +32,16 @@ export function receiptLink({ payout, swap, requestId }) {
   return u;
 }
 
+/** Receipt number (same as core.js receiptNo): "NP-" + first 8 hex chars of the PAYOUT tx hash, upper-case. */
+export const receiptNo = (hash) => "NP-" + hash.slice(2, 6).toUpperCase() + "-" + hash.slice(6, 10).toUpperCase();
+/** Same as core.js parseReceiptNo: "NP-7F3A-91C2" -> "0x7f3a91c2" (hash prefix), or null. */
+export function parseReceiptNo(s) {
+  const m = String(s ?? "").trim().toUpperCase().match(/^NP-([0-9A-F]{4})-?([0-9A-F]{4})$/);
+  return m ? ("0x" + m[1] + m[2]).toLowerCase() : null;
+}
+/** Short receipt link: <SITE_URL>/receipt.html#NP-XXXX-XXXX (the page finds the payout by its hash prefix). */
+export const receiptNoLink = (no) => `${SITE_URL}/receipt.html#${no}`;
+
 /** "r_" + 8 base36 characters, each uniform (crypto.randomInt, no modulo bias). */
 export function newRequestId(randomInt = crypto.randomInt) {
   let s = "";
@@ -97,8 +107,11 @@ export function uniqueAmount(base, taken = [], { maxUnits, random = Math.random 
   return formatAmount(free[Math.floor(random() * free.length) % free.length]);
 }
 
-/** Builds a new request record (pure). `existing` is the current list, used for amount uniqueness. */
-export function createRequest({ name, amount, corridor = "usdt-cngn", note, hours = 48, now = Date.now(), existing = [], maxUnits, random, randomInt } = {}) {
+/**
+ * Builds a new request record (pure). `existing` is the current list, used for amount uniqueness. `reserved` = extra
+ * amount strings to avoid in the same corridor (e.g. active "Get paid" registrations), so no deposit can match both.
+ */
+export function createRequest({ name, amount, corridor = "usdt-cngn", note, hours = 48, now = Date.now(), existing = [], maxUnits, random, randomInt, reserved = [] } = {}) {
   const c = getCorridor(corridor);
   const display = String(name ?? "").trim();
   if (!display || display.length > 40) throw new Error("Name must be 1–40 characters.");
@@ -112,7 +125,7 @@ export function createRequest({ name, amount, corridor = "usdt-cngn", note, hour
   do id = newRequestId(randomInt); while (ids.has(id));
   return {
     v: 1, id, name: display,
-    amount: uniqueAmount(amount, open.map((r) => r.amount), { maxUnits, random }),
+    amount: uniqueAmount(amount, [...open.map((r) => r.amount), ...reserved], { maxUnits, random }),
     dir: c.id, created: now, exp: now + Math.round(h * 3_600_000),
     ...(n ? { note: n } : {}),
   };

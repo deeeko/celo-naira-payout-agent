@@ -8,14 +8,15 @@ import readline from "node:readline/promises";
 import { erc20Abi, formatUnits, parseEventLogs, parseUnits } from "viem";
 import { verifyTx } from "@celo/attribution-tags";
 import {
-  ATTRIBUTION_CODE, CONTACTS_FILE, IDENTITY_REGISTRY, LOG_FILE, MAX_DAILY_USD, MAX_SLIPPAGE_BPS, MAX_USD, TOKENS,
+  AGENT_ADDRESS, ATTRIBUTION_CODE, CONTACTS_FILE, IDENTITY_REGISTRY, LOG_FILE, MAX_DAILY_USD, MAX_SLIPPAGE_BPS, MAX_USD,
+  MAX_WALLET_DAILY_USD, REPUTATION_REGISTRY, TOKENS,
 } from "./config.mjs";
 import { loadAccount, makeClients } from "./chain.mjs";
 import {
-  assertDailyCap, assertRecipient, assertSlippage, assertWithinCap, dailyUsedUnits, getCorridor, parseAmount,
-  parseContacts, resolveContact,
+  assertDailyCap, assertNotSelfPayment, assertRecipient, assertSlippage, assertWalletCap, assertWithinCap, dailyUsedUnits,
+  getCorridor, parseAmount, parseContacts, refusal, resolveContact, walletUsedUnits,
 } from "./guards.mjs";
-import { receiptLink } from "./requests.mjs";
+import { receiptLink, receiptNo, receiptNoLink } from "./requests.mjs";
 import { firmQuote, preview, submit } from "./textile.mjs";
 
 export function loadContacts() {
@@ -46,10 +47,42 @@ const fmt = (units) => formatUnits(units, 6);
 const balanceOf = (pub, token, owner) =>
   pub.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [owner] });
 
-/** USD value (6-dp units) used for both caps: USDT sold (usdt-cngn) or USDT bought (cngn-usdt). */
-function checkCaps(usdUnits) {
+/**
+ * USD value (6-dp units) used for the caps: USDT sold (usdt-cngn) or USDT bought (cngn-usdt).
+ * `wallet` (registrations only): also enforce the per-recipient-wallet rolling 24 h cap.
+ */
+function checkCaps(usdUnits, wallet) {
   assertWithinCap(fmt(usdUnits), MAX_USD);
-  assertDailyCap(dailyUsedUnits(readReceipts()), usdUnits, MAX_DAILY_USD);
+  const entries = readReceipts();
+  assertDailyCap(dailyUsedUnits(entries), usdUnits, MAX_DAILY_USD);
+  if (wallet) assertWalletCap(walletUsedUnits(entries, wallet), usdUnits, MAX_WALLET_DAILY_USD);
+}
+
+/** Contracts that are never a payout recipient. */
+export const BLOCKED_RECIPIENTS = [TOKENS.USDT.address, TOKENS.CNGN.address, IDENTITY_REGISTRY, REPUTATION_REGISTRY];
+
+/**
+ * Recipient checks for a "Get paid" registration (a raw wallet address, not a contact): not the agent, not one of the
+ * owner's own_wallets (contacts.json), not a token/registry contract or the zero address, and not the payer.
+ * These are permanent refusals (retrying can never make them pass).
+ */
+export function registrationRecipient(address, { agent, payer, own = [] }) {
+  let r;
+  try {
+    r = assertRecipient(address, { agent, own, blocked: BLOCKED_RECIPIENTS });
+  } catch (e) {
+    throw refusal(`${e.message}. Not paid.`);
+  }
+  assertNotSelfPayment(payer, r);
+  return r;
+}
+
+function ownWallets() {
+  try {
+    return loadContacts().own;
+  } catch (e) {
+    throw new Error(`Get-paid payouts need contacts.json for the own_wallets blocklist (contacts may be empty): ${e.message}`);
+  }
 }
 
 /**
@@ -57,7 +90,8 @@ function checkCaps(usdUnits) {
  * (incl. the rolling daily cap) and a Textile preview for the amount. Throws on the first failure.
  * Used by pay() and by autopilot BEFORE it records a deposit on a request.
  */
-export async function preflight({ to, amount, corridor = "usdt-cngn", agent } = {}) {
+export async function preflight({ to, amount, corridor = "usdt-cngn", agent, recipientAddress, payer } = {}) {
+  if (recipientAddress != null) return preflightRegistration({ amount, corridor, agent, recipientAddress, payer });
   const c = getCorridor(corridor);
   const { contacts, own } = loadContacts();
   const amountStr = parseAmount(amount);
@@ -76,9 +110,44 @@ export async function preflight({ to, amount, corridor = "usdt-cngn", agent } = 
   return { c, amountStr, sellAmount, recipient, pv };
 }
 
-export async function pay({ to, amount, corridor = "usdt-cngn", execute = false, yes = false, requestId } = {}) {
+/**
+ * Pre-flight for a "Get paid" registration: the recipient is the registration's sender (a raw address). Checks the
+ * recipient (permanent refusals first), then the per-payout, rolling daily and per-wallet caps and a live preview.
+ */
+async function preflightRegistration({ amount, corridor, agent, recipientAddress, payer }) {
+  const c = getCorridor(corridor);
+  const amountStr = parseAmount(amount);
+  const sellAmount = parseUnits(amountStr, 6);
+  const recipient = registrationRecipient(recipientAddress, { agent: agent ?? AGENT_ADDRESS, payer, own: ownWallets() });
+  if (c.usd === "sell") registrationCaps(sellAmount, recipient);
+  const pv = await preview(c.sellToken.address, c.buyToken.address, sellAmount.toString());
+  if (pv.status !== "preview") throw new Error(`No indicative price right now (${pv.status}).`);
+  if (c.usd === "buy") registrationCaps(BigInt(pv.buyAmount), recipient);
+  return { c, amountStr, sellAmount, recipient, pv, wallet: recipient };
+}
+
+/**
+ * Caps for a permissionless registration. One stranger's link must never halt autopilot for everyone, so the caps that
+ * are about THAT payment (per-payout, per-recipient-wallet) are permanent refusals: logged, not paid, autopilot carries
+ * on, and the owner can review it. Only the GLOBAL rolling daily cap still stops autopilot (it is the system-wide brake).
+ */
+export function registrationCaps(usdUnits, wallet) {
+  try { assertWithinCap(fmt(usdUnits), MAX_USD); }
+  catch (e) { throw refusal(`${e.message}. Not paid automatically; review it manually.`); }
+  const entries = readReceipts();
+  assertDailyCap(dailyUsedUnits(entries), usdUnits, MAX_DAILY_USD);
+  try { assertWalletCap(walletUsedUnits(entries, wallet), usdUnits, MAX_WALLET_DAILY_USD); }
+  catch (e) { throw refusal(`${e.message}. Not paid automatically; review it manually.`); }
+}
+
+/**
+ * Owner payouts: `to` is a contact name in contacts.json. "Get paid" registrations: `recipientAddress` is the
+ * registration's sender, `payer` the deposit's sender, `to` only a display name, `registrationId` the registration hash.
+ */
+export async function pay({ to, amount, corridor = "usdt-cngn", execute = false, yes = false, requestId, recipientAddress, payer, registrationId } = {}) {
   const account = loadAccount({ required: execute });
-  const { c, amountStr, sellAmount, recipient, pv } = await preflight({ to, amount, corridor, agent: account?.address });
+  const agent = account?.address ?? (recipientAddress != null ? AGENT_ADDRESS : undefined);
+  const { c, amountStr, sellAmount, recipient, pv, wallet: capWallet } = await preflight({ to, amount, corridor, agent, recipientAddress, payer });
   const sell = c.sellToken;
   const buy = c.buyToken;
   console.log(
@@ -127,7 +196,7 @@ export async function pay({ to, amount, corridor = "usdt-cngn", execute = false,
     if (takerPays > sellAmount) throw new Error("Quote asks for more than the amount requested. Aborting.");
     const quotedBuy = BigInt(q.quote.buyAmount);
     const usdUnits = c.usd === "sell" ? takerPays : quotedBuy;
-    if (c.usd === "buy") checkCaps(quotedBuy);
+    if (c.usd === "buy") checkCaps(quotedBuy, capWallet);
     const reactor = q.quote.reactor;
     console.log(`Firm quote: pay ${fmt(takerPays)} ${sell.symbol}, receive ${fmt(quotedBuy)} ${buy.symbol}`);
 
@@ -166,6 +235,7 @@ export async function pay({ to, amount, corridor = "usdt-cngn", execute = false,
     const received = delta < inSwap ? delta : inSwap;
     if (received <= 0n) throw new Error(`Swap succeeded but no ${buy.symbol} was received. Check ${hashes.swap}.`);
     if (c.usd === "buy") assertWithinCap(fmt(received), MAX_USD); // never pay out more dollars than the cap
+    if (c.usd === "buy" && capWallet) checkCaps(received, capWallet); // nor more than the wallet's 24 h allowance
     hashes.payout = await wallet.writeContract({ address: buy.address, abi: erc20Abi, functionName: "transfer", args: [recipient, received] });
     const pr = await pub.waitForTransactionReceipt({ hash: hashes.payout });
     if (pr.status !== "success") throw new Error(`Payout reverted (${hashes.payout}).`);
@@ -175,8 +245,9 @@ export async function pay({ to, amount, corridor = "usdt-cngn", execute = false,
     for (const [k, h] of Object.entries(hashes)) tags[k] = (await verifyTx({ client: pub, hash: h }))?.codes ?? null;
     const untagged = Object.keys(hashes).filter((k) => !tags[k]?.includes(ATTRIBUTION_CODE));
     const receiptUrl = receiptLink({ payout: hashes.payout, swap: hashes.swap, requestId });
+    const no = receiptNo(hashes.payout);
     log({
-      corridor: c.id, to, recipient, requestId,
+      corridor: c.id, to, recipient, requestId, ...(registrationId ? { registrationId, payer } : {}), receiptNo: no,
       sold: { token: sell.symbol, amount: fmt(takerPays) },
       paid: { token: buy.symbol, amount: fmt(received) },
       usd: fmt(usdUnits),
@@ -185,11 +256,12 @@ export async function pay({ to, amount, corridor = "usdt-cngn", execute = false,
     });
     console.log(`Paid ${fmt(received)} ${buy.symbol} to ${to}.`);
     for (const [k, h] of Object.entries(hashes)) console.log(`  ${k}: https://celoscan.io/tx/${h}  tag=${JSON.stringify(tags[k])}`);
-    console.log(`Receipt: ${receiptUrl}`);
+    console.log(`Receipt ${no}: ${receiptNoLink(no)}`);
+    console.log(`  full receipt link: ${receiptUrl}`);
     if (untagged.length) {
       console.error(`WARNING: missing attribution tag ${ATTRIBUTION_CODE} on: ${untagged.join(", ")}. These will not be credited.`);
       process.exitCode = 1;
     }
-    return { hashes, tags, untagged, receiptUrl, paid: fmt(received), usd: fmt(usdUnits) };
+    return { hashes, tags, untagged, receiptUrl, receiptNo: no, receiptNoUrl: receiptNoLink(no), paid: fmt(received), usd: fmt(usdUnits) };
   }
 }

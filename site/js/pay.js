@@ -1,6 +1,7 @@
 import {
   AGENT, CAP, TOKENS, CORRIDORS, EXPLORER_API, $, $$, el, icon, badge, naira, usd, num2, short,
   lagosTime, lagosClock, celoscanTx, celoscanAddr, getJson, loadRate, parseRequest, initChrome,
+  loadTxByHash, decodeRegistration, registrationError, loadRegistrations, registrationStatuses, receiptNo,
 } from "../assets/core.js";
 
 initChrome();
@@ -12,6 +13,7 @@ const MAX_HOURS = 168; // src/requests.mjs MAX_HOURS
 const MAX_USDT_BASE = 24.99; // the agent adds 0.01-0.99 and keeps the total <= CAP
 
 const setText = (node, text) => node.replaceChildren(text);
+const sameAddr = (a, b) => String(a ?? "").toLowerCase() === String(b ?? "").toLowerCase();
 const tokenOf = (key) => TOKENS[key]; // "USDT" | "cNGN"
 
 /** "5.03" -> 5030000n (both tokens use 6 decimals on Celo). parseRequest already checked the format. */
@@ -34,11 +36,15 @@ function countdown(ms) {
 }
 
 // ---------- routing ----------
-const token = new URLSearchParams(location.hash.slice(1)).get("r");
+const hashParams = new URLSearchParams(location.hash.slice(1));
+const token = hashParams.get("r");
+const regHash = hashParams.get("tx");
 addEventListener("hashchange", () => location.reload());
 
-if (token === null && !location.hash.slice(1)) {
+if (!location.hash.slice(1)) {
   initBuilder();
+} else if (regHash !== null) {
+  initRegistration(regHash.trim());
 } else {
   let req = null;
   try {
@@ -50,11 +56,102 @@ if (token === null && !location.hash.slice(1)) {
   if (req) initLink(req);
 }
 
-function showError(message) {
+/**
+ * The error view. opts: { title, lead, retry (bool), help: [children] , foot: [text, href, label] }
+ */
+function showError(message, opts = {}) {
   $("#view-explainer").hidden = true;
+  $("#view-loading").hidden = true;
+  $("#view-link").hidden = true;
   $("#view-error").hidden = false;
   setText($("#err-msg"), message);
-  document.title = "Link can't be opened · Naira Payout";
+  if (opts.title) setText($("#err-title"), opts.title);
+  if (opts.lead) setText($("#err-lead"), opts.lead);
+  if (opts.help) $("#err-help").replaceChildren(...opts.help);
+  if (opts.foot) {
+    const [text, href, label] = opts.foot;
+    setText($("#err-foot-text"), text);
+    const a = $("#err-foot-link");
+    a.href = href;
+    a.replaceChildren(label, icon("right"));
+  }
+  if (opts.retry) {
+    $("#err-retry-row").hidden = false;
+    $("#err-retry").addEventListener("click", () => location.reload(), { once: true });
+  }
+  document.title = (opts.title ? opts.title.replace(/\.$/, "") : "Link can't be opened") + " · Naira Payout";
+}
+
+// =====================================================================
+// #tx=<hash>: a request the recipient registered onchain from their own wallet
+// =====================================================================
+async function initRegistration(hash) {
+  const txHelp = [
+    "Links can break when a chat app cuts them short. Copy the whole link, including everything after ",
+    el("code", { class: "inline" }, "#tx="), ", and open it again.",
+  ];
+  const getPaidFoot = ["Want to be paid to your own wallet?", "get-paid.html", "Create a link"];
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+    showError("The transaction id in this link is incomplete or has extra characters.", { help: txHelp, foot: getPaidFoot });
+    return;
+  }
+
+  $("#view-explainer").hidden = true;
+  $("#view-loading").hidden = false;
+
+  let tx;
+  try {
+    tx = await loadTxByHash(hash);
+  } catch {
+    showError("Couldn't reach the Celo network to read this link.", {
+      title: "Couldn't load this link",
+      lead: "This is usually a brief network problem. Don't send any money until the link loads.",
+      retry: true,
+      help: ["You can also look the transaction up on ", el("a", { class: "link", href: celoscanTx(hash) }, "Celoscan"), "."],
+    });
+    return;
+  }
+  const notALink = { title: "This isn't a payment link", lead: "Don't send any money for it. Ask the person who shared it for a new link.", foot: getPaidFoot };
+  const onCeloscan = ["See the transaction on ", el("a", { class: "link", href: celoscanTx(hash) }, "Celoscan"), "."];
+
+  if (!tx) {
+    showError("No transaction with this id exists on Celo.", { help: txHelp, foot: getPaidFoot });
+    return;
+  }
+  if (tx.status === "pending") {
+    showError("This link was just created and its transaction hasn't confirmed yet.", {
+      title: "Almost ready",
+      lead: "Celo confirms a transaction in a few seconds. Try again shortly, and don't send money until the link loads.",
+      retry: true, help: onCeloscan,
+    });
+    return;
+  }
+  const req = tx.to && sameAddr(tx.to, AGENT) ? decodeRegistration(tx.input) : null;
+  if (!req) {
+    // One of the agent's own transactions: it isn't a link, but it does have a receipt.
+    const ownTx = tx.from && sameAddr(tx.from, AGENT);
+    const help = ownTx
+      ? ["This is one of the agent's own transactions. ", el("a", { class: "link", href: `receipt.html#${receiptNo(hash)}` }, `Open its receipt ${receiptNo(hash)}`), "."]
+      : onCeloscan;
+    showError("This transaction exists on Celo, but it isn't a payment request sent to the agent.", { ...notALink, help });
+    return;
+  }
+  if (tx.status !== "ok") {
+    showError("The transaction behind this link failed, so it never registered a payment request.", { ...notALink, help: onCeloscan });
+    return;
+  }
+  const blockSec = Math.floor(tx.timestamp / 1000);
+  const why = registrationError(req, blockSec);
+  if (why) {
+    showError(`This payment request breaks the rules the agent checks (${why}), so the agent will never pay it.`, { ...notALink, help: onCeloscan });
+    return;
+  }
+
+  $("#view-loading").hidden = true;
+  initLink({
+    id: tx.hash.toLowerCase(), name: req.n.trim(), amount: req.a, dir: req.d, created: blockSec * 1000, exp: req.e * 1000,
+    note: req.m || null, recipient: tx.from, regBlock: tx.blockNumber,
+  });
 }
 
 // =====================================================================
@@ -70,12 +167,32 @@ function initLink(req) {
   const uri = `ethereum:${sell.address}@${CELO_CHAIN_ID}/transfer?address=${AGENT}&uint256=${units}`;
   const inNaira = req.dir === "usdt-cngn";
   const sendText = `${exactAmount(req.amount)} ${sell.symbol}`;
+  const isReg = !!req.recipient; // #tx= link: the recipient registered it from their own wallet
 
   document.title = `Pay ${req.name} · Naira Payout`;
   setText($("#l-name"), req.name);
+  const to = isReg ? `${req.name}'s wallet` : req.name;
   setText($("#l-lead"), inNaira
-    ? `Send USD₮ on Celo. The agent converts it on Textile FX and pays ${req.name} in naira (cNGN).`
-    : `Send cNGN on Celo. The agent converts it on Textile FX and pays ${req.name} in dollars (USD₮).`);
+    ? `Send USD₮ on Celo. The agent converts it on Textile FX and pays ${to} in naira (cNGN).`
+    : `Send cNGN on Celo. The agent converts it on Textile FX and pays ${to} in dollars (USD₮).`);
+
+  if (isReg) {
+    $("#l-who").hidden = false;
+    setText($("#w-name"), req.name);
+    const w = $("#w-wallet");
+    w.href = celoscanAddr(req.recipient);
+    setText(w, short(req.recipient));
+    w.title = req.recipient;
+    $("#w-wallet-copy").dataset.copy = req.recipient;
+    setText($("#w-time"), `${lagosTime(req.created)} WAT`);
+    $("#w-reg").href = celoscanTx(req.id);
+    setText($("#l-id-label"), "Registration");
+    $("#l-id").replaceChildren(el("a", { class: "link", href: celoscanTx(req.id), title: req.id }, short(req.id)));
+    $("#l-safe-who").replaceChildren("The agent pays only ", el("b", { class: "mono" }, short(req.recipient)),
+      ", the wallet that registered this link, up to ", el("b", {}, `$${CAP} per payout`), ". Don't pay from that same wallet: the agent won't pay it.");
+  }
+  const regNote = el("div", { "aria-live": "polite" });
+  $("#l-notice").append(regNote);
 
   // amount + where to send
   $("#l-amount").value = exactAmount(req.amount);
@@ -94,7 +211,7 @@ function initLink(req) {
   setText(tokenLink, short(sell.address));
   tokenLink.title = sell.address;
   setText($("#l-exp-time"), ` · ${lagosTime(req.exp)} WAT`);
-  setText($("#l-id"), req.id);
+  if (!isReg) setText($("#l-id"), req.id);
   if (req.note) { $("#l-note-row").hidden = false; setText($("#l-note"), req.note); }
 
   // pay options
@@ -133,28 +250,49 @@ function initLink(req) {
   });
 
   // state: the deposit and payout found on chain, if any
-  const state = { deposit: null, payout: null, error: false, checkedAt: null };
+  // regs: every registration sent to the agent (#tx= links only), to apply the same-amount rule
+  const state = { deposit: null, payout: null, error: false, checkedAt: null, regs: null };
   let timer = null, busy = false;
   const expired = () => Date.now() >= req.exp;
+  const regStatusAt = (sec) => registrationStatuses(state.regs, sec).get(req.id);
+  /** null while unknown; "active" for #r= links. "in-use" = an earlier link took this amount. */
+  const regNow = () => (!isReg ? "active" : state.regs ? regStatusAt(Math.floor(Date.now() / 1000)) : null);
+  const selfPaid = () => isReg && state.deposit && sameAddr(state.deposit.from, req.recipient);
+
+  function renderRegNote() {
+    if (!isReg || state.deposit || expired()) return regNote.replaceChildren();
+    const s = regNow();
+    if (s === null) {
+      regNote.replaceChildren(state.error ? "" : el("p", { class: "small muted mt-16" }, "Checking that no earlier link uses this amount…"));
+    } else if (s === "in-use") {
+      regNote.replaceChildren(el("div", { class: "alert err mt-16" }, icon("alert"),
+        el("span", {}, `Don't send money to this link. An earlier link already asks for exactly ${sendText}, so a payment of this amount would be matched to that link, not to ${req.name}. ${req.name} should `,
+          el("a", { class: "link", href: "get-paid.html" }, "create a new link"), " with a slightly different amount.")));
+    } else regNote.replaceChildren();
+  }
 
   function render() {
-    // pay options stay visible only while the link is open and unpaid
-    const canPay = !expired() && !state.deposit;
+    renderRegNote();
+    const inUse = regNow() === "in-use";
+    // pay options stay visible only while the link is open, unpaid and (for #tx= links) not taken by an earlier link
+    const canPay = !expired() && !state.deposit && regNow() === "active";
     $("#l-actions").hidden = !canPay;
     $("#l-manual").hidden = !canPay;
     $("#l-qr-card").hidden = !canPay;
     $("#l-amount-hint").hidden = !canPay;
 
     const expBadge = $("#l-exp-badge");
-    if (state.deposit) expBadge.replaceChildren();
+    if (state.deposit || inUse) expBadge.replaceChildren();
     else if (expired()) expBadge.replaceChildren(badge("Expired", "err"));
     else expBadge.replaceChildren(badge("Open", "neutral"));
 
     // header badge
     let b;
     if (state.payout) b = badge("", "ok"), b.append(el("span", { class: "dot" }), "Paid out");
+    else if (selfPaid()) b = badge("Won't be paid out", "err");
     else if (state.deposit) b = badge("", "ok"), b.append(el("span", { class: "dot" }), "Payment received");
     else if (expired()) b = badge("Expired", "err");
+    else if (inUse) b = badge("Amount in use", "err");
     else if (state.error && !state.checkedAt) b = badge("Couldn't check", "warn");
     else if (!state.checkedAt) b = null;
     else b = badge("", "warn"), b.append(el("span", { class: "dot" }), "Waiting for payment");
@@ -166,6 +304,8 @@ function initLink(req) {
       dep.replaceChildren(el("span", { class: "row", style: "justify-content:flex-end;gap:8px" },
         el("span", {}, "From ", el("span", { class: "mono" }, short(state.deposit.from))),
         el("a", { class: "link", href: celoscanTx(state.deposit.hash) }, "View transaction ", icon("ext"))));
+    } else if (inUse && state.checkedAt) {
+      setText(dep, "—");
     } else if (state.checkedAt) {
       setText(dep, expired() ? "None before expiry" : "Not received yet");
     } else if (state.error) setText(dep, "—");
@@ -174,11 +314,14 @@ function initLink(req) {
     setText($("#l-st-payout-label"), `Payout to ${req.name}`);
     const pay = $("#l-st-payout");
     if (state.payout) {
-      pay.replaceChildren(el("a", { class: "link", href: `receipt.html#p=${state.payout.hash}&r=${req.id}` }, "View receipt ", icon("right")));
+      const href = isReg ? `receipt.html#p=${state.payout.hash}` : `receipt.html#p=${state.payout.hash}&r=${req.id}`;
+      pay.replaceChildren(el("a", { class: "link", href, title: receiptNo(state.payout.hash) }, "View receipt ", icon("right")));
+    } else if (selfPaid()) {
+      setText(pay, "Not paid");
     } else if (state.deposit) {
       setText(pay, "In progress");
     } else if (state.checkedAt || state.error) {
-      setText(pay, expired() ? "—" : "After payment");
+      setText(pay, expired() || inUse ? "—" : "After payment");
     }
 
     setText($("#l-st-checked"), state.checkedAt ? `${lagosClock(state.checkedAt)} WAT` : state.error ? "—" : "");
@@ -191,13 +334,21 @@ function initLink(req) {
         el("span", {}, "Couldn't reach the Celo explorer. Trying again in 10 s. You can also check the ",
           el("a", { class: "link", href: celoscanAddr(AGENT) }, "agent on Celoscan"), ".")));
     } else if (state.payout) {
-      msg.replaceChildren(el("p", { class: "small muted mt-16" }, `${req.name} has been paid. The receipt rebuilds the payout from the chain.`));
+      msg.replaceChildren(el("p", { class: "small muted mt-16" }, isReg
+        ? `${req.name} has been paid to ${short(req.recipient)}, the wallet that registered this link. The receipt rebuilds the payout from the chain.`
+        : `${req.name} has been paid. The receipt rebuilds the payout from the chain.`));
+    } else if (selfPaid()) {
+      msg.replaceChildren(el("div", { class: "alert err mt-16" }, icon("alert"),
+        el("span", {}, `This payment came from ${short(req.recipient)}, the same wallet the link pays. The agent doesn't pay a link from its own recipient, so it won't be paid out. `,
+          el("a", { class: "link", href: "verify.html" }, "Look up a transaction"), " for details.")));
     } else if (state.deposit) {
       msg.replaceChildren(el("div", { class: "alert mt-16" }, icon("check"),
         el("span", {}, "Payment received. Don't send it again. Autopilot converts it and pays out on its next pass, usually within a few minutes while it is running.")));
     } else if (expired()) {
       msg.replaceChildren(el("div", { class: "alert err mt-16" }, icon("alert"),
         el("span", {}, `This link expired on ${lagosTime(req.exp)} WAT. Don't send money to it: the agent no longer matches deposits for it. Ask for a new link.`)));
+    } else if (inUse) {
+      msg.replaceChildren(el("p", { class: "small muted mt-16" }, "Nothing to track: this link can't be paid while an earlier link uses the same amount."));
     } else if (state.checkedAt) {
       msg.replaceChildren(el("p", { class: "small muted mt-16" }, "Checks the chain every 10 seconds while this tab is open. A payment shows here a few seconds after it confirms."));
     } else msg.replaceChildren();
@@ -213,8 +364,18 @@ function initLink(req) {
     if (busy || document.visibilityState !== "visible") return;
     busy = true;
     try {
-      if (!state.deposit) state.deposit = await findDeposit(sell.address, units, req.created, req.exp);
-      if (state.deposit && !state.payout) state.payout = await findPayout(buy.address, state.deposit);
+      if (isReg && !state.regs) {
+        const regs = (await loadRegistrations(20)).map((r) => ({ ...r, hash: String(r.hash).toLowerCase() }));
+        // the explorer can lag a few seconds behind the RPC; without our own entry the rule can't be applied
+        if (!regs.some((r) => r.hash === req.id)) throw new Error("registration not indexed yet");
+        state.regs = regs;
+      }
+      if (regNow() !== "in-use" && !state.deposit) {
+        // for #tx= links, a deposit counts only if this link was the active one for that amount when it arrived
+        const accept = isReg ? (t) => regStatusAt(Math.floor(t.ts / 1000)) === "active" : () => true;
+        state.deposit = await findDeposit(sell.address, units, req.created, req.exp, accept);
+      }
+      if (state.deposit && !state.payout && !selfPaid()) state.payout = await findPayout(buy.address, state.deposit, isReg ? req.recipient : null);
       state.error = false;
       state.checkedAt = Date.now();
     } catch {
@@ -227,7 +388,7 @@ function initLink(req) {
   }
   function schedule() {
     clearTimeout(timer);
-    if (state.payout) return; // done
+    if (state.payout || selfPaid()) return; // done
     if (expired() && !state.deposit && state.checkedAt) return; // nothing more can happen
     timer = setTimeout(check, POLL_MS);
   }
@@ -257,10 +418,8 @@ async function* transfers(filter, tokenAddr, sinceMs) {
     if (!next) return;
   }
 }
-const sameAddr = (a, b) => String(a ?? "").toLowerCase() === String(b ?? "").toLowerCase();
-
-/** The earliest transfer to the agent of exactly `units` of the sell token between created and exp. */
-async function findDeposit(tokenAddr, units, created, exp) {
+/** The earliest transfer to the agent of exactly `units` of the sell token between created and exp that `accept` allows. */
+async function findDeposit(tokenAddr, units, created, exp, accept = () => true) {
   const since = Math.floor(created / 1000) * 1000; // block times are whole seconds
   let found = null;
   for await (const t of transfers("to", tokenAddr, since)) {
@@ -268,6 +427,7 @@ async function findDeposit(tokenAddr, units, created, exp) {
     if (t.ts >= exp || !sameAddr(t.to?.hash, AGENT) || sameAddr(t.from?.hash, AGENT)) continue;
     if (!sameAddr(t.token?.address_hash ?? t.token?.address, tokenAddr)) continue;
     if (String(t.total?.value) !== units.toString()) continue;
+    if (!accept(t)) continue;
     found = t; // newest first, so the last match is the earliest
   }
   return found && { hash: found.transaction_hash, from: found.from?.hash, ts: found.ts, block: found.block_number };
@@ -276,8 +436,9 @@ async function findDeposit(tokenAddr, units, created, exp) {
 /**
  * The agent's first plain outgoing transfer of the buy token in a block after the deposit.
  * Transactions that also move tokens INTO the agent are swap legs, not payouts, so they are skipped.
+ * With `recipient` (#tx= links) only a transfer TO that wallet counts.
  */
-async function findPayout(tokenAddr, deposit) {
+async function findPayout(tokenAddr, deposit, recipient = null) {
   const incoming = new Set();
   for await (const t of transfers("to", null, deposit.ts)) {
     if (sameAddr(t.to?.hash, AGENT) && t.transaction_hash) incoming.add(String(t.transaction_hash).toLowerCase());
@@ -289,6 +450,7 @@ async function findPayout(tokenAddr, deposit) {
     if (!(Number(t.block_number) > Number(deposit.block))) continue;
     if (incoming.has(String(t.transaction_hash ?? "").toLowerCase())) continue;
     if (!sameAddr(t.token?.address_hash ?? t.token?.address, tokenAddr)) continue;
+    if (recipient && !sameAddr(t.to?.hash, recipient)) continue;
     found = t; // newest first, so the last match is the earliest
   }
   return found && { hash: found.transaction_hash, to: found.to?.hash, ts: found.ts };

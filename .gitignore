@@ -9,3 +9,4 @@ site/_spec/
 requests.json
 watch-state.json
 *.tmp
+registrations-state.json

@@ -49,6 +49,8 @@
   <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7"/></symbol>
   <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3.5V8h4.5"/><path d="M9 12.5h6M9 16h6"/></symbol>
+  <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M15.5 13.5h1.5"/></symbol>
+  <symbol id="i-receipt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h12v17l-2.5-1.6-2 1.6-2-1.6-2 1.6-2-1.6L6 20.5z"/><path d="M9 8.5h6M9 12h6M9 15.5h3.5"/></symbol>
 </svg>
 <div class="sky sky-sm" aria-hidden="true"></div>
 <aside class="sidebar" id="sidebar" aria-label="Site navigation">
@@ -62,8 +64,10 @@
     <a href="index.html" data-label="Overview"><svg class="i"><use href="#i-home"/></svg><span class="sb-label">Overview</span></a>
     <a href="quote.html" data-label="Quote"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Quote</span></a>
     <a href="transactions.html" data-label="Transactions"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Transactions</span></a>
+    <a href="get-paid.html" data-label="Get paid"><svg class="i"><use href="#i-wallet"/></svg><span class="sb-label">Get paid</span></a>
     <a href="pay.html" data-label="Payment links"><svg class="i"><use href="#i-link"/></svg><span class="sb-label">Payment links</span></a>
     <a href="autopilot.html" data-label="Autopilot"><svg class="i"><use href="#i-bolt"/></svg><span class="sb-label">Autopilot</span></a>
+    <a href="receipt.html" data-label="Receipts"><svg class="i"><use href="#i-receipt"/></svg><span class="sb-label">Receipts</span></a>
     <p class="sb-group">Trust</p>
     <a href="agent.html" data-label="Agent"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
     <a href="verify.html" data-label="Verify"><svg class="i"><use href="#i-shield"/></svg><span class="sb-label">Verify</span></a>
@@ -102,6 +106,7 @@
       <span class="eyebrow">Payment links</span>
       <h1 class="page-title">Get paid with a <em>link</em></h1>
       <p class="lead">A payment link asks someone to send an exact amount of USD₮ or cNGN to the agent. When that amount arrives, autopilot converts it and pays the contact named on the link.</p>
+      <p class="mt-16"><a class="link" href="get-paid.html">Anyone can now create a link that pays their own wallet <svg class="i" aria-hidden="true"><use href="#i-right"/></svg></a></p>
     </header>
 
     <div class="container stack">
@@ -206,7 +211,38 @@
     </div>
   </div>
 
-  <!-- #r=<token>: a payment link -->
+  <!-- #tx=<hash>: reading the registration from the chain -->
+  <div id="view-loading" hidden>
+    <header class="page-head container">
+      <span class="eyebrow">Payment link</span>
+      <h1 class="page-title"><span class="skel lg" style="width:min(320px,80%);height:44px"></span></h1>
+      <p class="lead" role="status" aria-live="polite">Reading this link from the Celo chain…</p>
+    </header>
+    <div class="container">
+      <div class="grid-main" aria-hidden="true">
+        <section class="card">
+          <div class="card-h"><span class="skel" style="width:120px"></span></div>
+          <div class="card-b stack">
+            <span class="skel lg" style="width:100%;height:56px"></span>
+            <span class="skel lg" style="width:180px"></span>
+            <span class="skel" style="width:100%"></span>
+            <span class="skel" style="width:100%"></span>
+            <span class="skel" style="width:70%"></span>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-h"><span class="skel" style="width:110px"></span></div>
+          <div class="card-b stack">
+            <span class="skel" style="width:100%"></span>
+            <span class="skel" style="width:100%"></span>
+            <span class="skel" style="width:60%"></span>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- #r=<token> (owner's link) or #tx=<hash> (registered by the recipient's wallet): a payment link -->
   <div id="view-link" hidden>
     <header class="page-head container">
       <span class="eyebrow">Payment link</span>
@@ -243,7 +279,7 @@
                 <li><span>Exchange rate</span><span id="l-rate" class="num" aria-live="polite"><span class="skel"></span></span></li>
                 <li><span>Expires</span><span><span id="l-countdown" class="num"></span><span class="muted" id="l-exp-time"></span></span></li>
                 <li id="l-note-row" hidden><span>Note</span><span id="l-note"></span></li>
-                <li><span>Request</span><span class="mono" id="l-id"></span></li>
+                <li><span id="l-id-label">Request</span><span class="mono" id="l-id"></span></li>
               </ul>
               <div id="l-notice" aria-live="polite"></div>
 
@@ -268,6 +304,19 @@
         </div>
 
         <div class="stack">
+          <section class="card" aria-labelledby="who-h" id="l-who" hidden>
+            <div class="card-h"><h2 id="who-h">Who gets paid</h2></div>
+            <div class="card-b">
+              <ul class="kv-list">
+                <li><span>Name</span><span id="w-name"></span></li>
+                <li><span>Wallet</span><span class="row" style="justify-content:flex-end;gap:8px"><a class="mono link" id="w-wallet" href="#"></a><button class="icon-btn sm" type="button" id="w-wallet-copy" aria-label="Copy recipient wallet address" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></li>
+                <li><span>Registered</span><span id="w-time" class="num"></span></li>
+              </ul>
+              <div class="alert mt-16"><svg class="i"><use href="#i-shield"/></svg><span><b>Registered by this wallet onchain.</b> The wallet signed this request itself, so the payout can only go to it. <a class="link" id="w-reg" href="#">View registration <svg class="i" aria-hidden="true"><use href="#i-ext"/></svg></a></span></div>
+              <p class="small muted mt-16">The name and note were typed by the wallet owner. They aren't checked by anyone.</p>
+            </div>
+          </section>
+
           <section class="card" aria-labelledby="status-h">
             <div class="card-h"><h2 id="status-h">Status</h2><span id="l-status-badge" aria-live="polite"><span class="skel" style="width:120px;height:24px;border-radius:999px"></span></span></div>
             <div class="card-b" aria-live="polite">
@@ -296,7 +345,7 @@
             <div class="card-b">
               <ul class="checks" style="grid-template-columns:minmax(0,1fr)">
                 <li><svg class="i"><use href="#i-check"/></svg><span>The address is the agent's: <b class="mono" id="l-agent-short"></b>. It is registered on Celo as ERC-8004 agent <a class="link" href="agent.html">#10079</a>.</span></li>
-                <li><svg class="i"><use href="#i-check"/></svg><span>The agent only pays <b>approved contacts</b>, up to <b>$25 per payout</b>.</span></li>
+                <li><svg class="i"><use href="#i-check"/></svg><span id="l-safe-who">The agent only pays <b>approved contacts</b>, up to <b>$25 per payout</b>.</span></li>
                 <li><svg class="i"><use href="#i-check"/></svg><span>Only the <b>first matching deposit</b> before expiry is paid out.</span></li>
               </ul>
             </div>
@@ -310,19 +359,20 @@
   <div id="view-error" hidden>
     <header class="page-head container">
       <span class="eyebrow">Payment link</span>
-      <h1 class="page-title">This link can't be opened</h1>
-      <p class="lead">Don't send any money for it. Ask the person who shared it for a new link.</p>
+      <h1 class="page-title" id="err-title">This link can't be opened</h1>
+      <p class="lead" id="err-lead">Don't send any money for it. Ask the person who shared it for a new link.</p>
     </header>
     <div class="container">
       <section class="card" aria-labelledby="err-h" style="max-width:640px">
         <div class="card-h"><h2 id="err-h">What went wrong</h2></div>
         <div class="card-b stack">
           <div class="alert err" role="alert"><svg class="i"><use href="#i-alert"/></svg><span id="err-msg"></span></div>
-          <p class="small soft">Links can break when a chat app cuts them short. Copy the whole link, including everything after <code class="inline">#r=</code>, and open it again.</p>
+          <p class="small soft" id="err-help">Links can break when a chat app cuts them short. Copy the whole link, including everything after <code class="inline">#r=</code>, and open it again.</p>
+          <div class="row" id="err-retry-row" hidden><button class="btn btn-secondary btn-sm" type="button" id="err-retry"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg>Try again</button></div>
         </div>
         <div class="card-f">
-          <span class="small muted">New to payment links?</span>
-          <a class="btn btn-secondary btn-sm" href="pay.html">How payment links work<svg class="i" aria-hidden="true"><use href="#i-right"/></svg></a>
+          <span class="small muted" id="err-foot-text">New to payment links?</span>
+          <a class="btn btn-secondary btn-sm" id="err-foot-link" href="pay.html">How payment links work<svg class="i" aria-hidden="true"><use href="#i-right"/></svg></a>
         </div>
       </section>
     </div>
@@ -337,7 +387,7 @@
       </div>
       <div>
         <h4>Product</h4>
-        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="pay.html">Payment links</a></li><li><a href="autopilot.html">Autopilot</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="get-paid.html">Get paid</a></li><li><a href="pay.html">Payment links</a></li><li><a href="autopilot.html">Autopilot</a></li><li><a href="receipt.html">Receipts</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
       </div>
       <div>
         <h4>Resources</h4>
@@ -348,6 +398,8 @@
   </div>
 </footer>
 <script src="assets/vendor/qrcode.js"></script>
+<script nomodule src="assets/legacy.js"></script>
+<noscript><p style="position:fixed;left:12px;right:12px;bottom:12px;padding:14px 16px;border-radius:14px;background:#fcff52;color:#0b0f00;font:500 15px/1.45 system-ui,sans-serif">Turn on JavaScript (or use Chrome, Safari or Firefox) to see the live data on this page.</p></noscript>
 <script type="module" src="js/pay.js"></script>
 </body>
 </html>

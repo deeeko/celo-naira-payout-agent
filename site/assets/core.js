@@ -243,9 +243,14 @@ export function registrationStatuses(regs, nowSec) {
   }
   return out;
 }
-/** All registration txs sent to the agent (Blockscout, newest first, up to `maxPages` pages of 50). */
-export async function loadRegistrations(maxPages = 6) {
+/**
+ * Registration txs sent to the agent (Blockscout, newest first). Pages back over the SAME window the agent uses
+ * (168 h max link life + 24 h), so the site and the agent always see the same list for the same-amount rule.
+ * Throws instead of returning a partial list.
+ */
+export async function loadRegistrations(maxPages = 100) {
   const regs = [];
+  const sinceSec = Math.floor(Date.now() / 1000) - (MAX_REG_HOURS + 24) * 3600;
   let next = null;
   for (let p = 0; p < maxPages; p++) {
     const qs = new URLSearchParams({ filter: "to", ...(next ?? {}) });
@@ -257,9 +262,11 @@ export async function loadRegistrations(maxPages = 6) {
       regs.push({ hash: t.hash, from: t.from?.hash, block: Number(t.block_number ?? t.block), position: Number(t.position ?? 0), time: Math.floor(Date.parse(t.timestamp) / 1000), req });
     }
     next = d.next_page_params ?? null;
-    if (!next) break;
+    const items = d.items ?? [];
+    const oldest = items.length ? Math.floor(Date.parse(items[items.length - 1].timestamp) / 1000) : 0;
+    if (!next || oldest < sinceSec) return regs; // complete for the window
   }
-  return regs;
+  throw new Error("partial registration list");
 }
 
 // ---------- receipt numbers (Receipt v2) ----------

@@ -1,8 +1,8 @@
-import { AGENT, loadTxPage, celoscanTx, celoscanAddr, lagosTime, short, isTagged, txKind, txLabel, txStatus, el, badge, icon, toast, download, $, $$, initChrome } from "../assets/core.js";
+import { AGENT, loadTxPage, receiptNo, celoscanTx, celoscanAddr, lagosTime, short, isTagged, txKind, txLabel, txStatus, el, badge, icon, toast, download, $, $$, initChrome } from "../assets/core.js";
 
 initChrome();
 
-const COLS = ["Activity", "Status", "Attribution tag", "Time (WAT)", "Transaction"];
+const COLS = ["Activity", "Status", "Attribution tag", "Time (WAT)", "Transaction", "Receipt"];
 const HASH_RE = /^0x[0-9a-f]{64}$/i;
 const EMPTY = {
   all: "No transactions from the agent wallet yet.",
@@ -26,7 +26,7 @@ const refreshBtn = $("#refresh");
 const cell = (label, cls, ...kids) => el("td", { "data-label": label, class: cls }, ...kids);
 
 function skeletonRows(n = 6) {
-  const widths = [150, 70, 70, 110, 120];
+  const widths = [150, 70, 70, 110, 120, 110];
   return Array.from({ length: n }, () =>
     el("tr", { "aria-hidden": "true" }, COLS.map((c, i) => cell(c, i === 0 ? "lead-cell" : null, el("span", { class: "skel", style: `width:${widths[i]}px` })))),
   );
@@ -47,20 +47,29 @@ function row(tx) {
         el("a", { class: "mono", href: celoscanTx(hash), target: "_blank", rel: "noopener", title: hash, "aria-label": `Open transaction ${short(hash)} on Celoscan` }, short(hash)),
         el("button", { class: "icon-btn sm", type: "button", "aria-label": "Copy transaction hash", dataset: { copy: hash, copyLabel: "Transaction hash copied" } }, icon("copy")))
     : el("span", { class: "muted" }, "—");
+  const no = valid ? receiptNo(hash) : "";
+  const receiptCell = valid
+    ? el("a", { class: "btn btn-secondary btn-sm receipt-btn", href: `receipt.html#${no}`, "aria-label": `Open receipt ${no}` },
+        icon("doc"), el("span", { class: "mono" }, no))
+    : el("span", { class: "muted" }, "—");
   return el("tr", {},
     cell("Activity", "lead-cell", el("span", { class: "strong" }, txLabel(tx))),
     cell("Status", null, badge(statusText, statusKind)),
     cell("Attribution tag", null, tagged ? badge("Tagged", "ok") : badge("Missing", "warn")),
     cell("Time (WAT)", "num", time),
     cell("Transaction", null, hashCell),
+    cell("Receipt", null, receiptCell),
   );
 }
 
 function visibleRows() {
   const q = state.query.trim().toLowerCase();
-  return state.rows.filter((tx) =>
-    (state.filter === "all" || txKind(tx) === state.filter) &&
-    (!q || String(tx.hash ?? "").toLowerCase().includes(q)));
+  return state.rows.filter((tx) => {
+    if (state.filter !== "all" && txKind(tx) !== state.filter) return false;
+    if (!q) return true;
+    const hash = String(tx.hash ?? "");
+    return hash.toLowerCase().includes(q) || (HASH_RE.test(hash) && receiptNo(hash).toLowerCase().includes(q));
+  });
 }
 
 function renderTable() {
@@ -80,7 +89,7 @@ function renderTable() {
   const list = visibleRows();
   if (!list.length) {
     let msg;
-    if (state.query.trim()) msg = "No loaded transaction matches that hash.";
+    if (state.query.trim()) msg = "No loaded transaction matches that hash or receipt number.";
     else if (state.next) msg = `No ${NAMES[state.filter]} in the loaded transactions.`;
     else msg = EMPTY[state.filter];
     const hint = state.next ? el("div", { class: "mt-8 small" }, "Load more to include older transactions.") : null;
@@ -185,12 +194,13 @@ const csvCell = (v) => {
 
 function exportCsv() {
   if (!state.rows.length) return;
-  const header = ["hash", "activity", "status", "tagged", "time_utc", "celoscan_url"];
+  const header = ["hash", "receipt_no", "activity", "status", "tagged", "time_utc", "celoscan_url"];
   const lines = state.rows.map((tx) => {
     const hash = String(tx.hash ?? "");
     const t = tx.timestamp ? new Date(tx.timestamp) : null;
     return [
       hash,
+      HASH_RE.test(hash) ? receiptNo(hash) : "",
       txLabel(tx),
       txStatus(tx)[0],
       isTagged(tx) ? "yes" : "no",

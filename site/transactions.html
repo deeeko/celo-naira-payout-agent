@@ -24,6 +24,8 @@
   .search svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-3); pointer-events: none; }
   .search .input { width: 240px; padding: 9px 12px 9px 36px; font-size: var(--fs-small); }
   .tx-hash { display: inline-flex; align-items: center; gap: 8px; }
+  .receipt-btn { padding: 6px 11px; gap: 6px; white-space: nowrap; }
+  .receipt-btn .mono { font-size: 12.5px; }
   @media (max-width: 640px) {
     .tx-tools { justify-content: flex-start; width: 100%; }
     .tx-tools .segmented { flex-wrap: wrap; max-width: 100%; border-radius: var(--r-lg); }
@@ -59,6 +61,8 @@
   <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7"/></symbol>
   <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3.5V8h4.5"/><path d="M9 12.5h6M9 16h6"/></symbol>
+  <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M15.5 13.5h1.5"/></symbol>
+  <symbol id="i-receipt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h12v17l-2.5-1.6-2 1.6-2-1.6-2 1.6-2-1.6L6 20.5z"/><path d="M9 8.5h6M9 12h6M9 15.5h3.5"/></symbol>
 </svg>
 <div class="sky sky-sm" aria-hidden="true"></div>
 <aside class="sidebar" id="sidebar" aria-label="Site navigation">
@@ -72,8 +76,10 @@
     <a href="index.html" data-label="Overview"><svg class="i"><use href="#i-home"/></svg><span class="sb-label">Overview</span></a>
     <a href="quote.html" data-label="Quote"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Quote</span></a>
     <a href="transactions.html" data-label="Transactions"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Transactions</span></a>
+    <a href="get-paid.html" data-label="Get paid"><svg class="i"><use href="#i-wallet"/></svg><span class="sb-label">Get paid</span></a>
     <a href="pay.html" data-label="Payment links"><svg class="i"><use href="#i-link"/></svg><span class="sb-label">Payment links</span></a>
     <a href="autopilot.html" data-label="Autopilot"><svg class="i"><use href="#i-bolt"/></svg><span class="sb-label">Autopilot</span></a>
+    <a href="receipt.html" data-label="Receipts"><svg class="i"><use href="#i-receipt"/></svg><span class="sb-label">Receipts</span></a>
     <p class="sb-group">Trust</p>
     <a href="agent.html" data-label="Agent"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
     <a href="verify.html" data-label="Verify"><svg class="i"><use href="#i-shield"/></svg><span class="sb-label">Verify</span></a>
@@ -153,9 +159,9 @@
             <button type="button" data-kind="identity" aria-pressed="false">Identity</button>
           </div>
           <div class="search">
-            <label class="sr-only" for="q">Search by transaction hash</label>
+            <label class="sr-only" for="q">Search by transaction hash or receipt number</label>
             <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>
-            <input class="input" id="q" type="search" placeholder="Search by transaction hash" autocomplete="off" spellcheck="false">
+            <input class="input" id="q" type="search" placeholder="Search hash or receipt no." autocomplete="off" spellcheck="false">
           </div>
           <button class="icon-btn" type="button" id="refresh" aria-label="Refresh transactions"><svg class="i" aria-hidden="true"><use href="#i-refresh"/></svg></button>
           <button class="btn btn-secondary btn-sm" type="button" id="export"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Export CSV</button>
@@ -165,7 +171,7 @@
         <table class="table">
           <caption class="sr-only">Transactions sent from the agent wallet, newest first</caption>
           <thead>
-            <tr><th scope="col">Activity</th><th scope="col">Status</th><th scope="col">Attribution tag</th><th scope="col">Time (WAT)</th><th scope="col">Transaction</th></tr>
+            <tr><th scope="col">Activity</th><th scope="col">Status</th><th scope="col">Attribution tag</th><th scope="col">Time (WAT)</th><th scope="col">Transaction</th><th scope="col">Receipt</th></tr>
           </thead>
           <tbody id="rows" aria-live="polite"></tbody>
         </table>
@@ -189,7 +195,7 @@
       </div>
       <div>
         <h4>Product</h4>
-        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="pay.html">Payment links</a></li><li><a href="autopilot.html">Autopilot</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="get-paid.html">Get paid</a></li><li><a href="pay.html">Payment links</a></li><li><a href="autopilot.html">Autopilot</a></li><li><a href="receipt.html">Receipts</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
       </div>
       <div>
         <h4>Resources</h4>
@@ -199,6 +205,8 @@
     <div class="base"><span>Built for Agents Open for Business on Celo · Track 3: Stablecoin Corridors</span><span class="foot-legal"><a href="privacy.html">Privacy policy</a> · <a href="terms.html">Terms</a> · <button class="linklike" type="button" data-consent-open>Privacy choices</button></span><span>Data: Celo Forno RPC · Blockscout · Textile FX</span></div>
   </div>
 </footer>
+<script nomodule src="assets/legacy.js"></script>
+<noscript><p style="position:fixed;left:12px;right:12px;bottom:12px;padding:14px 16px;border-radius:14px;background:#fcff52;color:#0b0f00;font:500 15px/1.45 system-ui,sans-serif">Turn on JavaScript (or use Chrome, Safari or Firefox) to see the live data on this page.</p></noscript>
 <script type="module" src="js/transactions.js"></script>
 </body>
 </html>

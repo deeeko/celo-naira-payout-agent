@@ -47,6 +47,40 @@ export function assertDailyCap(usedUnits, addUnits, cap) {
   }
 }
 
+/** Sum of USD paid to ONE recipient wallet by executed payouts in the 24 h before `now` (any source: contacts or registrations). */
+export function walletUsedUnits(entries, recipient, now = Date.now()) {
+  const who = String(recipient ?? "").toLowerCase();
+  if (!who) return 0n;
+  return dailyUsedUnits((entries ?? []).filter((e) => String(e?.recipient ?? "").toLowerCase() === who), now);
+}
+
+/** Throws if adding `addUnits` to what this wallet already received in the last 24 h exceeds `cap` (USD string). */
+export function assertWalletCap(usedUnits, addUnits, cap) {
+  const capUnits = parseUnits(String(cap), 6);
+  if (usedUnits + addUnits > capUnits) {
+    throw new Error(
+      `This payout (${formatUnits(addUnits, 6)} USD) would take this wallet's last 24 h total to ${formatUnits(usedUnits + addUnits, 6)} USD, ` +
+      `over the per-wallet cap of ${cap} USD (MAX_WALLET_DAILY_USD). Nothing was sent.`,
+    );
+  }
+}
+
+/**
+ * A refusal that will never pass, however often it is retried (self-payment, blocked recipient, a registration that
+ * does not check out onchain). Autopilot logs it and moves on instead of stopping.
+ */
+export function refusal(message) {
+  return Object.assign(new Error(message), { permanent: true });
+}
+
+/** The payer of a deposit must not be the wallet that gets paid (no self-payment / wash). */
+export function assertNotSelfPayment(payer, recipient) {
+  if (!isAddress(String(payer ?? "")) || !isAddress(String(recipient ?? ""))) throw refusal("Payer or recipient is not a valid address");
+  if (String(payer).toLowerCase() === String(recipient).toLowerCase()) {
+    throw refusal("The payer and the recipient are the same wallet (self-payment). Not paid.");
+  }
+}
+
 /** "10", "$10", "10.5" -> "10" / "10.5". At most 6 decimals (USDT precision). */
 export function parseUsd(input) {
   const t = String(input).trim().replace(/^\$/, "");

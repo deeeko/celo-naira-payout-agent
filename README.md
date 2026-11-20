@@ -46,6 +46,59 @@ payer" is our own check that the reviewer has sent USD₮ or cNGN to the agent, 
 Every transaction the agent sends (reset, approval, swap, payout, identity registration) carries the attribution tag
 `celo_7360953d1b53`, attached once where the wallet client is built (`src/chain.mjs`) using `@celo/attribution-tags`.
 
+## Get paid: recipients register their own request (`src/registrations.mjs`)
+
+Someone who wants to be paid (in naira from abroad, or in dollars) opens `get-paid.html` and sends one zero-value
+transaction **from their own wallet** to the agent. Its input is `hex("NP1:" + JSON)` plus the attribution tag, with
+JSON `{ "a": "5.03", "d": "usdt-cngn" | "cngn-usdt", "e": <expiry, unix seconds>, "n": "<name>", "m": "<note>" }`.
+The recipient is the transaction's sender, proven by its signature, so it can't be mistyped. The name, note, amount
+and wallet are public and permanent onchain. The link is `pay.html#tx=<registration hash>`.
+
+1. `watch` reads registrations from Blockscout (`/addresses/<agent>/transactions?filter=to`, every page, failed
+   transactions ignored) on every poll, and scans deposits only up to the block Blockscout has indexed, so a fresh
+   registration is never missed.
+2. Same-amount rule, shared with the site (ported from `site/assets/core.js` and cross-checked in
+   `test/registrations.test.mjs`): among valid, unexpired registrations with the same corridor and exact amount, the
+   earliest (block, then position) is **active**; later ones are **amount in use** and are never paid.
+3. A deposit matches the active registration for its token and exact amount when it arrived at or after the
+   registration and before its expiry (statuses are worked out at the deposit's own block time).
+4. Before recording anything, the registration is read again over RPC (sender, content, block, position, time), and
+   the checks run: the payer is not the recipient; the recipient is not the agent, an `own_wallets` entry, a token or
+   ERC-8004 registry contract, or the zero address; per payout `MAX_USD`; rolling 24 h `MAX_DAILY_USD`; and per
+   recipient wallet rolling 24 h `MAX_WALLET_DAILY_USD` (default 25).
+   - Self-payment, a blocked recipient or a registration that doesn't check out is **refused**: logged as
+     `refused_deposit`, not paid, and autopilot carries on. The deposit stays in the agent wallet.
+   - A cap or a missing price stops autopilot without recording anything, exactly like owner requests.
+5. The deposit is saved in `registrations-state.json` (git-ignored) **before** paying: one payout per registration.
+   Then the normal payout runs and pays the bought token to the registration's sender.
+6. A deposit that matches both an owner request and a registration is logged as `ambiguous_deposit` and never paid.
+   `request` avoids the amounts of active registrations when it picks the cents.
+
+```bash
+node src/agent.mjs registrations                     # active | in-use | expired | invalid | received | paid
+node src/agent.mjs retry --registration 0x<hash>     # DRY RUN of a failed registration payout (add --execute)
+```
+
+Owner requests (`requests.json`, `contacts.json`) work exactly as before.
+
+## Receipt numbers
+
+Every executed payout (`pay`, `watch`, `retry`) prints
+
+```
+Receipt NP-7F3A-91C2: https://deeeko.github.io/celo-naira-payout-agent/receipt.html#NP-7F3A-91C2
+```
+
+The number is `NP-` plus the first 8 hex characters of the payout transaction hash, upper-case, so anyone can work
+it out from the chain. It is stored as `receiptNo` in `receipts.jsonl` and on the paid request or registration.
+The full `receipt.html#p=<payout>&s=<swap>` link is printed and stored too.
+
+| Variable | Default | Controls |
+|---|---|---|
+| `MAX_WALLET_DAILY_USD` | `25` | Most USD paid to any one wallet in a rolling 24 h ("Get paid" payouts) |
+| `REGISTRATIONS_STATE_FILE` | `registrations-state.json` (repo root) | "Get paid" deposits and payouts (written only with `--execute`) |
+| `BLOCKSCOUT_API` | `https://celo.blockscout.com/api/v2` | Where registrations are discovered |
+
 ## Safety is enforced in code, not by the AI
 
 | Rule | Where |
