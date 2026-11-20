@@ -68,7 +68,8 @@ body {
   background: var(--bg); color: var(--text);
   font: 400 var(--fs-body)/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
-  overflow-x: clip; /* not "hidden": hidden makes body a scroll container and breaks position:sticky in Safari */
+  overflow-x: hidden; /* fallback for Safari < 16, which doesn't know "clip" */
+  overflow-x: clip; /* preferred: "hidden" makes body a scroll container and breaks position:sticky in Safari */
 }
 button, input, select, textarea, output { font-family: inherit; } /* Safari doesn't inherit fonts into form controls */
 main { flex: 1; position: relative; z-index: 1; }

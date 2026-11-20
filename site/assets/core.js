@@ -3,7 +3,12 @@
 // rate.json, refreshed every 30 min by a GitHub Action (Textile's rates feed blocks other sites).
 
 export const RPC = "https://forno.celo.org";
-export const EXPLORER_API = "https://celo.blockscout.com/api/v2";
+// On Vercel the site has a cached, read-only explorer proxy (/api/explorer) and a live rate (/api/rate).
+// GitHub Pages and the local preview server have neither, so they call Blockscout and rate.json directly.
+const HOST = typeof location !== "undefined" ? location.hostname : "";
+export const HAS_API = Boolean(HOST) && !/github\.io$/.test(HOST) && !/^(localhost|127\.0\.0\.1)$/.test(HOST);
+const BLOCKSCOUT = "https://celo.blockscout.com/api/v2";
+export const EXPLORER_API = HAS_API ? "/api/explorer" : BLOCKSCOUT;
 export const AGENT = "0x8a695cf54CB44753c8b784EB36d266f748617a1e";
 export const AGENT_ID = 10079n;
 export const REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
@@ -44,10 +49,26 @@ export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 // ---------- network ----------
-/** fetch JSON with a 12 s timeout and one retry on network errors, 429 and 5xx. */
+/** AbortSignal.timeout needs iOS 16+ / Chrome 103+; older phones (common in Nigeria) get the manual equivalent. */
+export function timeoutSignal(ms) {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") return AbortSignal.timeout(ms);
+  if (typeof AbortController === "undefined") return undefined;
+  const c = new AbortController();
+  setTimeout(() => c.abort(), ms);
+  return c.signal;
+}
+/** fetch JSON with a 12 s timeout and one retry on network errors, 429 and 5xx. If the Vercel proxy itself fails,
+ *  fall back to calling Blockscout directly so the page still works. */
 export async function getJson(url, init = {}, attempt = 0) {
+  if (typeof url === "string" && url.startsWith("/api/explorer/")) {
+    try { return await getJsonRaw(url, init, attempt); }
+    catch { return getJsonRaw(BLOCKSCOUT + url.slice("/api/explorer".length), init, 0); }
+  }
+  return getJsonRaw(url, init, attempt);
+}
+async function getJsonRaw(url, init = {}, attempt = 0) {
   try {
-    const r = await fetch(url, { ...init, signal: AbortSignal.timeout(12_000) });
+    const r = await fetch(url, { ...init, signal: timeoutSignal(12_000) });
     if (r.status === 429 || r.status >= 500) throw Object.assign(new Error(`HTTP ${r.status}`), { retry: true });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return await r.json();
@@ -55,7 +76,7 @@ export async function getJson(url, init = {}, attempt = 0) {
     const retryable = e.retry || e.name === "TypeError" || e.name === "TimeoutError" || e.name === "AbortError";
     if (attempt === 0 && retryable) {
       await new Promise((res) => setTimeout(res, 800));
-      return getJson(url, init, 1);
+      return getJsonRaw(url, init, 1);
     }
     throw e;
   }
@@ -164,6 +185,92 @@ export function decodeTransfers(receipt) {
 export const tokenSymbol = (addr) => (addr?.toLowerCase() === TOKENS.USDT.address.toLowerCase() ? "USD₮" : addr?.toLowerCase() === TOKENS.cNGN.address.toLowerCase() ? "cNGN" : "token");
 export const units6 = (v) => Number(v) / 1e6;
 
+// ---------- "Get paid" registrations (recipient's own wallet, onchain) ----------
+// A zero-value tx FROM the recipient TO the agent with input = hex(utf8("NP1:" + JSON)) + tag suffix.
+// JSON { a: "5.03", d: "usdt-cngn"|"cngn-usdt", e: <expiry unix seconds>, n: <name 1-40>, m?: <note <=80> }.
+// The recipient is tx.from. Request id = the registration tx hash. See site/_spec/FEATURES2.md.
+export const REG_PREFIX = "NP1:";
+const utf8Hex = (s) => [...new TextEncoder().encode(s)].map((b) => b.toString(16).padStart(2, "0")).join("");
+export const MAX_REG_HOURS = 168;
+/** Validate the JSON body. `blockTimeSec` = registration block time (for the expiry window). Returns an error string or null. */
+export function registrationError(r, blockTimeSec) {
+  if (!r || typeof r !== "object") return "not a registration";
+  if (!CORRIDORS[r.d]) return "unknown corridor";
+  if (typeof r.a !== "string" || !/^\d+(\.\d{1,2})?$/.test(r.a) || Number(r.a) <= 0) return "invalid amount";
+  if (r.d === "usdt-cngn" && (Number(r.a) < 1 || Number(r.a) > 24.99)) return "amount must be $1 to $24.99";
+  if (typeof r.n !== "string" || !r.n.trim() || r.n.length > 40) return "invalid name";
+  if (r.m != null && (typeof r.m !== "string" || r.m.length > 80)) return "invalid note";
+  if (!Number.isInteger(r.e)) return "invalid expiry";
+  if (blockTimeSec != null && (r.e <= blockTimeSec || r.e > blockTimeSec + MAX_REG_HOURS * 3600)) return "expiry must be 1 to 168 hours after registration";
+  return null;
+}
+/** Calldata for the registration tx (with this app's attribution tag). */
+export function encodeRegistration(r) {
+  const body = { a: r.a, d: r.d, e: r.e, n: r.n, ...(r.m ? { m: r.m } : {}) };
+  const err = registrationError(body, null);
+  if (err) throw new Error(err);
+  return "0x" + utf8Hex(REG_PREFIX + JSON.stringify(body)) + tagSuffix();
+}
+/** Parse a registration tx input (any trailing ERC-8021 tag is stripped first). Returns the JSON body or null. */
+export function decodeRegistration(input) {
+  let h = String(input ?? "").toLowerCase().replace(/^0x/, "");
+  if (h.endsWith(MARKER)) {
+    const len = parseInt(h.slice(-MARKER.length - 4, -MARKER.length - 2), 16);
+    h = h.slice(0, -(MARKER.length + 4 + len * 2));
+  }
+  if (!h.startsWith(utf8Hex(REG_PREFIX))) return null;
+  try { return JSON.parse(new TextDecoder().decode(hexBytes(h.slice(utf8Hex(REG_PREFIX).length)))); } catch { return null; }
+}
+/**
+ * The same-amount rule (the agent implements it identically): among VALID, UNEXPIRED registrations with the same
+ * corridor and the same exact amount, the earliest (block, then position) is active; later ones are "amount in use".
+ * Input items: { hash, from, block, position, time (sec), req }. Returns a Map hash -> "active" | "in-use" | "expired" | "invalid".
+ */
+export function registrationStatuses(regs, nowSec) {
+  const out = new Map();
+  const live = [];
+  for (const r of regs) {
+    if (registrationError(r.req, r.time)) out.set(r.hash, "invalid");
+    else if (r.req.e <= nowSec) out.set(r.hash, "expired");
+    else live.push(r);
+  }
+  live.sort((x, y) => x.block - y.block || x.position - y.position);
+  const taken = new Set();
+  for (const r of live) {
+    const key = r.req.d + ":" + Number(r.req.a).toFixed(2);
+    out.set(r.hash, taken.has(key) ? "in-use" : "active");
+    taken.add(key);
+  }
+  return out;
+}
+/** All registration txs sent to the agent (Blockscout, newest first, up to `maxPages` pages of 50). */
+export async function loadRegistrations(maxPages = 6) {
+  const regs = [];
+  let next = null;
+  for (let p = 0; p < maxPages; p++) {
+    const qs = new URLSearchParams({ filter: "to", ...(next ?? {}) });
+    const d = await getJson(`${EXPLORER_API}/addresses/${AGENT}/transactions?${qs}`);
+    for (const t of d.items ?? []) {
+      if (t.status !== "ok" || t.to?.hash?.toLowerCase() !== AGENT.toLowerCase()) continue;
+      const req = decodeRegistration(t.raw_input);
+      if (!req) continue;
+      regs.push({ hash: t.hash, from: t.from?.hash, block: Number(t.block_number ?? t.block), position: Number(t.position ?? 0), time: Math.floor(Date.parse(t.timestamp) / 1000), req });
+    }
+    next = d.next_page_params ?? null;
+    if (!next) break;
+  }
+  return regs;
+}
+
+// ---------- receipt numbers (Receipt v2) ----------
+/** NP-XXXX-XXXX from a payout tx hash. */
+export const receiptNo = (hash) => "NP-" + hash.slice(2, 6).toUpperCase() + "-" + hash.slice(6, 10).toUpperCase();
+/** "NP-7F3A-91C2" -> "0x7f3a91c2" (hash prefix), or null. */
+export function parseReceiptNo(s) {
+  const m = String(s ?? "").trim().toUpperCase().match(/^NP-([0-9A-F]{4})-?([0-9A-F]{4})$/);
+  return m ? ("0x" + m[1] + m[2]).toLowerCase() : null;
+}
+
 // ---------- payment requests (pay.html#r=...) ----------
 // Created by the CLI (`node src/agent.mjs request ...`); the same format is parsed here.
 // { v:1, id:"r_xxxxxxxx", name, amount:"5.03", dir:"usdt-cngn"|"cngn-usdt", created: ms, exp: ms, note? }
@@ -184,7 +291,9 @@ export function parseRequest(token) {
 
 /** { rate, fromPreview, fetchedAt, ageMin, stale, previewUsd, ticker } — throws if no rate. */
 export async function loadRate() {
-  const d = await getJson("rate.json", { cache: "no-store" });
+  let d;
+  try { d = HAS_API ? await getJson("/api/rate") : null; } catch { d = null; } // live on Vercel
+  if (!d || !(Number(d.effectiveRate) > 0 || d.ticker)) d = await getJson("rate.json", { cache: "no-store" });
   const fromPreview = Number(d.effectiveRate) > 0;
   const rate = fromPreview ? Number(d.effectiveRate) : Number(d.ticker?.bid);
   if (!(rate > 0)) throw new Error("no rate");
@@ -434,8 +543,9 @@ function initSidebar() {
     if (e.key === "Tab" && root.dataset.drawer === "open") {
       const f = [...sidebar.querySelectorAll("a[href], button:not([disabled])")].filter((n) => n.offsetParent !== null);
       if (!f.length) return;
-      if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f.at(-1).focus(); }
-      else if (!e.shiftKey && document.activeElement === f.at(-1)) { e.preventDefault(); f[0].focus(); }
+      const last = f[f.length - 1]; // (not .at(-1): older Safari)
+      if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); f[0].focus(); }
     }
   });
 
