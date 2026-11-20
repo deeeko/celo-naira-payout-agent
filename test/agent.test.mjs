@@ -60,12 +60,13 @@ test("plain-language parser", () => {
 });
 
 test("Textile request body targets Celo mainnet USDT -> cNGN, and taker is optional", () => {
-  const b = rfqBody("10000000");
+  // rfqBody(sell, buy, amount, taker) is generic over corridors since payment links added cngn-usdt.
+  const b = rfqBody(TOKENS.USDT.address, TOKENS.CNGN.address, "10000000");
   assert.equal(b.chainId, 42220);
   assert.equal(b.sellToken, TOKENS.USDT.address);
   assert.equal(b.buyToken, TOKENS.CNGN.address);
   assert.equal(b.taker, undefined);
-  assert.equal(rfqBody("1", AGENT).taker, AGENT);
+  assert.equal(rfqBody(TOKENS.USDT.address, TOKENS.CNGN.address, "1", AGENT).taker, AGENT);
 });
 
 test("attribution suffix round-trips and sits at the very end of calldata", () => {

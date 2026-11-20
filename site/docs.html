@@ -3,21 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://forno.celo.org https://celo.blockscout.com; style-src 'self' 'unsafe-inline' https://api.fontshare.com; font-src https://cdn.fontshare.com; img-src 'self'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://forno.celo.org https://celo.blockscout.com; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Docs · Naira Payout</title>
-<meta name="description" content="How the Naira Payout agent quotes, converts and pays out, the safeguards it enforces in code, and how to run it from the command line.">
+<meta name="description" content="How the Naira Payout agent quotes, converts and pays out in two corridors, how payment links and autopilot work, the safeguards it enforces in code, and how to run it from the command line.">
 <meta name="theme-color" content="#040806">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Naira Payout Agent">
-<meta property="og:description" content="Send dollars. They receive naira. Converts on Textile FX and pays out on Celo.">
+<meta property="og:description" content="Pay someone in naira or dollars. Converts on Textile FX and pays out on Celo.">
 <meta property="og:image" content="https://deeeko.github.io/celo-naira-payout-agent/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="icon" href="logo.png" type="image/png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="preconnect" href="https://api.fontshare.com">
-<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
-<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=general-sans@300,400,500,600&f[]=sentient@500i&display=swap">
 <link rel="stylesheet" href="assets/styles.css">
 <style>
   .docs-aside { position: sticky; top: 96px; }
@@ -30,7 +27,13 @@
   .docs-main .table td.lead-cell code.inline { white-space: normal; }
   #config td.lead-cell code.inline { white-space: nowrap; }
   .docs-main .table .nw, .docs-main .table .badge code.inline { white-space: nowrap; }
-  #cli td.lead-cell { min-width: 240px; }
+  #cli td.lead-cell { min-width: 220px; }
+  .docs-main .card-b > p + .steps { margin-top: 24px; }
+  .docs-main .card-b > .label + .checks { margin-top: 14px; }
+  .docs-main .card-b + .card-b { padding-top: 0; }
+  @media (min-width: 641px) {
+    #cli th:last-child, #cli td:last-child { width: 1%; white-space: nowrap; }
+  }
   .addr { overflow-wrap: anywhere; }
   .qs { width: 100%; min-width: 0; gap: 10px; grid-template-columns: minmax(0, 1fr); }
   .addr-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -70,6 +73,10 @@
   <symbol id="i-scan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v4.5l3 2"/></symbol>
   <symbol id="i-chevron-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14.5 6-6 6 6 6"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3.5V8h4.5"/><path d="M9 12.5h6M9 16h6"/></symbol>
 </svg>
 <div class="sky sky-sm" aria-hidden="true"></div>
 <aside class="sidebar" id="sidebar" aria-label="Site navigation">
@@ -83,11 +90,15 @@
     <a href="index.html" data-label="Overview"><svg class="i"><use href="#i-home"/></svg><span class="sb-label">Overview</span></a>
     <a href="quote.html" data-label="Quote"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Quote</span></a>
     <a href="transactions.html" data-label="Transactions"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Transactions</span></a>
+    <a href="pay.html" data-label="Payment links"><svg class="i"><use href="#i-link"/></svg><span class="sb-label">Payment links</span></a>
+    <a href="autopilot.html" data-label="Autopilot"><svg class="i"><use href="#i-bolt"/></svg><span class="sb-label">Autopilot</span></a>
     <p class="sb-group">Trust</p>
     <a href="agent.html" data-label="Agent"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
     <a href="verify.html" data-label="Verify"><svg class="i"><use href="#i-shield"/></svg><span class="sb-label">Verify</span></a>
     <p class="sb-group">Resources</p>
     <a href="docs.html" data-label="Docs"><svg class="i"><use href="#i-book"/></svg><span class="sb-label">Docs</span></a>
+    <a href="privacy.html" data-label="Privacy"><svg class="i"><use href="#i-lock"/></svg><span class="sb-label">Privacy</span></a>
+    <a href="terms.html" data-label="Terms"><svg class="i"><use href="#i-doc"/></svg><span class="sb-label">Terms</span></a>
     <a href="https://github.com/deeeko/celo-naira-payout-agent" data-label="GitHub"><svg class="i"><use href="#i-github"/></svg><span class="sb-label">GitHub</span><svg class="i ext"><use href="#i-ext"/></svg></a>
     <a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e" data-label="Agent on Celoscan"><svg class="i"><use href="#i-scan"/></svg><span class="sb-label">Agent on Celoscan</span><svg class="i ext"><use href="#i-ext"/></svg></a>
   </nav>
@@ -125,22 +136,72 @@
       <section class="card" id="overview" aria-labelledby="overview-h">
         <div class="card-h"><h2 id="overview-h">Overview</h2></div>
         <div class="card-b">
-          <p class="soft">Naira Payout is a command-line agent on Celo mainnet. It takes USD₮, converts it to cNGN (a naira stablecoin) through Textile FX, and sends the cNGN to a recipient you have approved in advance.</p>
-          <p class="soft">It is for people who hold dollars and need to pay someone in Nigeria in naira. The recipient gets cNGN in their Celo wallet and can redeem it for naira, for example through cngn.co.</p>
-          <p class="soft">Onchain: the agent's ERC-8004 identity (agent #10079), and every transaction it sends during a payout: the USD₮ approval (and an allowance reset, if one is needed), the swap and the cNGN transfer. Each one carries the attribution tag <code class="inline" translate="no">celo_7360953d1b53</code>. Off chain: the Textile price quote, your contacts file, the agent's key file and a local receipts log.</p>
-          <div class="alert mt-16"><svg class="i"><use href="#i-info"/></svg><span>This website is read-only. It shows live prices and onchain data but cannot move money. Payouts are run by the agent's owner from the command line.</span></div>
+          <p class="soft">Naira Payout is a command-line agent on Celo mainnet. It converts between USD₮ and cNGN (a naira stablecoin) through Textile FX, and pays the result to a recipient you have approved in advance. It works in two directions, called corridors: pay someone in naira, or pay someone in dollars.</p>
+          <p class="soft">The owner can run a single payout by hand, or create a <a class="link" href="pay.html">payment link</a> for an exact amount. When the payer sends that amount, <a class="link" href="autopilot.html">autopilot</a> matches the deposit, converts it and pays the contact. After every payout the agent prints a <a class="link" href="receipt.html">receipt</a> link that rebuilds the payout from chain data, and the payer can rate it in the agent's onchain reputation registry.</p>
+          <p class="soft">Onchain: the agent's ERC-8004 identity (agent #10079), and every transaction it sends during a payout: the approval (and an allowance reset, if one is needed), the swap and the transfer to the recipient. Each one carries the attribution tag <code class="inline" translate="no">celo_7360953d1b53</code>. Off chain, on the owner's computer: the Textile price quotes, the contacts file, the agent's key file, the payment requests file and a local receipts log.</p>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th scope="col">Corridor</th><th scope="col">Payer sends</th><th scope="col">Recipient gets</th><th scope="col">Counted against the caps</th></tr></thead>
+            <tbody>
+              <tr><td class="lead-cell" data-label="Corridor"><div><code class="inline" translate="no">usdt-cngn</code><div class="micro muted">Default. Pay someone in naira</div></div></td><td data-label="Payer sends"><span>USD₮</span></td><td data-label="Recipient gets"><span>cNGN</span></td><td data-label="Counted against the caps"><span>The USD₮ sold</span></td></tr>
+              <tr><td class="lead-cell" data-label="Corridor"><div><code class="inline" translate="no">cngn-usdt</code><div class="micro muted">Pay someone in dollars</div></div></td><td data-label="Payer sends"><span>cNGN</span></td><td data-label="Recipient gets"><span>USD₮</span></td><td data-label="Counted against the caps"><span>The USD₮ bought</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card-b">
+          <p class="small muted">Amounts are always typed in the token the payer sends: USD₮ for <code class="inline" translate="no">usdt-cngn</code>, naira for <code class="inline" translate="no">cngn-usdt</code>. A cNGN recipient can redeem it for naira, for example through cngn.co.</p>
+          <div class="alert mt-16"><svg class="i"><use href="#i-info"/></svg><span>This website never holds keys and never moves the agent's money. Payouts are run by the agent on its owner's computer. The only transaction a page can ask you to send is your own rating of a payout, from your own wallet.</span></div>
         </div>
       </section>
 
       <section class="card" id="flow" aria-labelledby="flow-h">
         <div class="card-h"><h2 id="flow-h">How a payout runs</h2><span class="muted small"><code class="inline" translate="no">src/pay.mjs</code></span></div>
         <div class="card-b">
-          <ol class="steps">
-            <li><h3>Quote</h3><p>Checks the amount against the cap and the recipient against the allow-list, then asks Textile FX for a free preview. A dry run stops here. With <code class="inline" translate="no">--execute</code> it checks the wallet holds enough USD₮ and about 0.02 CELO for gas, asks you to confirm, then requests a firm quote.</p></li>
-            <li><h3>Convert</h3><p>If the current allowance is too low, approves exactly the amount the firm quote needs (resetting an old allowance to zero first), then broadcasts Textile's swap transaction. An expired quote is never sent.</p></li>
-            <li><h3>Pay</h3><p>Reads the agent's cNGN balance before and after the swap, and transfers exactly that difference to the recipient. No estimate is used.</p></li>
-            <li><h3>Check</h3><p>Reads every transaction it sent back from the chain (reset, approval, swap, payout), flags any that is missing the tag, and exits with an error if one is. It prints Celoscan links and appends a line to <code class="inline" translate="no">receipts.jsonl</code>.</p></li>
+          <p class="soft">The same steps run for both corridors. “Sell token” is what the payer sends (USD₮ or cNGN); “buy token” is what the recipient gets.</p>
+          <ol class="steps mt-24">
+            <li><h3>Quote</h3><p>Checks the recipient against the allow-list and asks Textile FX for a free preview. In <code class="inline" translate="no">usdt-cngn</code> the caps are checked before any price is requested; in <code class="inline" translate="no">cngn-usdt</code> they are checked on the dollars the preview would buy. A dry run stops here. With <code class="inline" translate="no">--execute</code> it confirms both tokens use 6 decimals, that the wallet holds the sell amount and about 0.02 CELO for gas, asks you to type “yes”, then requests a firm quote.</p></li>
+            <li><h3>Convert</h3><p>Checks the firm quote against the preview (and, for <code class="inline" translate="no">cngn-usdt</code>, the caps again). If the current allowance is too low, approves exactly the sell amount the quote needs, to the contract the quote names (resetting an old allowance to zero first). Then it broadcasts Textile's swap transaction. An expired quote is never sent.</p></li>
+            <li><h3>Pay</h3><p>Measures the agent's buy-token balance before and after the swap and transfers that difference to the recipient, never more than the swap itself delivered to the agent. A deposit that lands at the same moment is not paid on. No estimate is used.</p></li>
+            <li><h3>Check</h3><p>Reads every transaction it sent back from the chain (reset, approval, swap, payout), flags any that is missing the tag and exits with an error if one is. It prints Celoscan links and a receipt link, and appends the payout to <code class="inline" translate="no">receipts.jsonl</code>.</p></li>
           </ol>
+        </div>
+      </section>
+
+      <section class="card" id="links" aria-labelledby="links-h">
+        <div class="card-h"><h2 id="links-h">Payment links and autopilot</h2><span class="muted small"><code class="inline" translate="no">src/requests.mjs</code> · <code class="inline" translate="no">src/watch.mjs</code></span></div>
+        <div class="card-b">
+          <p class="soft">A payment link asks someone to send an exact amount to the agent. When that amount arrives, autopilot pays the contact named on the link. Requests live only on the owner's computer, in <code class="inline" translate="no">requests.json</code>; the link itself carries the public details (name, amount, corridor, note and expiry) and nothing is stored on a server.</p>
+          <ol class="steps mt-24">
+            <li><h3>Request</h3><p>The owner runs <code class="inline" translate="no">request</code> with a contact from <code class="inline" translate="no">contacts.json</code>, an amount and a corridor. The agent adds a random 0.01–0.99 to the amount so it differs from every other open request, and keeps it within the per-payout cap.</p></li>
+            <li><h3>Link</h3><p>It prints the exact amount and a <code class="inline" translate="no">pay.html#r=…</code> link, valid for 48 hours unless <code class="inline" translate="no">--hours</code> says otherwise (up to 168). The payer opens it and sends exactly that amount from any Celo wallet.</p></li>
+            <li><h3>Match</h3><p><code class="inline" translate="no">watch</code> reads token transfers to the agent from Celo. A deposit matches a request only when the token is the request's sell token, the value is the exact amount, and it arrived after the request was made and before it expired.</p></li>
+            <li><h3>Pay</h3><p>With <code class="inline" translate="no">--execute</code>, it first runs the checks that send nothing: the contact, both caps and a live price. If one fails, it records nothing and stops before that deposit, so the request is not used up and the deposit matches again once the owner fixes the cause and restarts. Otherwise it records the payer and deposit on the request, then runs the normal payout above for that request's contact, amount and corridor. Without <code class="inline" translate="no">--execute</code> it prints what it would do and saves nothing.</p></li>
+          </ol>
+        </div>
+        <div class="card-b">
+          <h3 class="label">What autopilot never pays</h3>
+          <ul class="checks mt-16">
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>A deposit with no request.</b> If no open request has that token and exact amount, the deposit is logged as unmatched and left in the agent wallet for the owner to handle.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>A request twice.</b> The deposit is saved on the request before paying, so one request gets at most one payout, even after a crash.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Anyone outside the contacts file.</b> The name on a link is looked up in <code class="inline" translate="no">contacts.json</code> when the request is created and again when it is paid.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Over the limits.</b> Every autopilot payout goes through the same per-payout and 24-hour caps as a manual one.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>A failed payout again.</b> If a payout fails, the error is saved on the request, it is not retried automatically, and autopilot stops. The owner can run <code class="inline" translate="no">retry</code> for that request, which refuses once a swap or payout was sent.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Its own transfers.</b> Tokens that reach the agent from its own transactions, such as the output of a swap, are ignored.</span></li>
+          </ul>
+        </div>
+        <div class="card-f">
+          <span class="small muted">Autopilot checks every 15 seconds by default, saves its place in <code class="inline" translate="no">watch-state.json</code> and stops cleanly with Ctrl+C.</span>
+          <a class="btn btn-secondary btn-sm" href="autopilot.html">See autopilot activity <svg class="i"><use href="#i-right"/></svg></a>
+        </div>
+      </section>
+
+      <section class="card" id="receipts" aria-labelledby="receipts-h">
+        <div class="card-h"><h2 id="receipts-h">Receipts and reviews</h2></div>
+        <div class="card-b">
+          <p class="soft">After every executed payout, from <code class="inline" translate="no">pay</code> or from autopilot, the agent prints and logs a link of the form <code class="inline" translate="no">receipt.html#p=&lt;payout&gt;&amp;s=&lt;swap&gt;</code>, plus <code class="inline" translate="no">&amp;r=&lt;request&gt;</code> when it paid a payment link. The <a class="link" href="receipt.html">receipt page</a> rebuilds everything from Celo in your browser: the token, amount and recipient of the payout, the amounts sold and bought in the swap and the effective rate, the time, and the attribution tag on each transaction. It can be shared on WhatsApp, copied or printed.</p>
+          <p class="soft">From a receipt, the payer can rate the payout from 1 to 5 stars. The rating is a <code class="inline" translate="no">giveFeedback</code> transaction to the ERC-8004 Reputation Registry, sent from the payer's own wallet after they approve it there. The registry rejects ratings from the agent's owner or operators. The <a class="link" href="agent.html">Agent page</a> lists every rating with its average.</p>
+          <div class="alert mt-16"><svg class="i"><use href="#i-info"/></svg><span>The registry cannot check that a reviewer used the agent. “Verified payer” is our own check that the reviewing address has sent USD₮ or cNGN to the agent. Other ratings are shown as unverified.</span></div>
         </div>
       </section>
 
@@ -148,11 +209,14 @@
         <div class="card-h"><h2 id="safe-h">Safeguards</h2><span class="muted small">Enforced in <code class="inline" translate="no">src/guards.mjs</code></span></div>
         <div class="card-b">
           <ul class="checks">
-            <li><svg class="i"><use href="#i-check"/></svg><span><b>Dry run by default.</b> Nothing is sent without <code class="inline" translate="no">--execute</code>, and then it waits for you to type “yes” (or pass <code class="inline" translate="no">--yes</code>).</span></li>
-            <li><svg class="i"><use href="#i-check"/></svg><span><b>$25 per payout.</b> Larger amounts are refused before any quote is requested. The cap is set by <code class="inline" translate="no">MAX_USD</code>.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Dry run by default.</b> Nothing is sent without <code class="inline" translate="no">--execute</code>. A manual payout then waits for you to type “yes” (or pass <code class="inline" translate="no">--yes</code>).</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>$25 per payout.</b> Set by <code class="inline" translate="no">MAX_USD</code>. For <code class="inline" translate="no">cngn-usdt</code> it is checked on the preview, on the firm quote and on the dollars actually paid.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>$100 in any 24 hours.</b> Set by <code class="inline" translate="no">MAX_DAILY_USD</code>. The agent adds up the USD value of executed payouts in <code class="inline" translate="no">receipts.jsonl</code> over the last 24 hours and refuses a payout that would go over.</span></li>
             <li><svg class="i"><use href="#i-check"/></svg><span><b>Approved recipients only.</b> Payees must be named in the contacts file. The agent's own address, the owner's <code class="inline" translate="no">own_wallets</code>, the token and registry contracts and the zero address are blocked.</span></li>
-            <li><svg class="i"><use href="#i-check"/></svg><span><b>Price protection.</b> The firm quote may be at most 3% worse than the preview (<code class="inline" translate="no">MAX_SLIPPAGE_BPS</code>). Expired quotes are never sent.</span></li>
-            <li><svg class="i"><use href="#i-check"/></svg><span><b>Pays what it received.</b> The payout is the measured change in the agent's cNGN balance, not an assumed amount.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Price protection.</b> The firm quote may be at most 3% worse than the preview (<code class="inline" translate="no">MAX_SLIPPAGE_BPS</code>), and may not ask for more than the amount requested. Expired quotes are never sent.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Pays what it received.</b> The payout is the measured change in the agent's balance, capped at what the swap delivered.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Autopilot pays only matched requests.</b> Exact token and amount, after the request was made and before it expired, one payout per request. Unmatched deposits are never paid, and autopilot stops on a payout error.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Links stay within the cap.</b> <code class="inline" translate="no">request</code> refuses an amount whose cents suffix would pass <code class="inline" translate="no">MAX_USD</code>, and a naira link worth more than <code class="inline" translate="no">MAX_USD</code> at the current preview.</span></li>
             <li><svg class="i"><use href="#i-check"/></svg><span><b>Key stays local.</b> The private key lives in a file outside the repo and is never printed.</span></li>
             <li><svg class="i"><use href="#i-check"/></svg><span><b>AI cannot override limits.</b> The optional AI only maps a request to a contact name and an amount. Code applies every rule above.</span></li>
           </ul>
@@ -166,14 +230,21 @@
             <thead><tr><th scope="col">Command</th><th scope="col">What it does</th><th scope="col">Sends transactions</th></tr></thead>
             <tbody>
               <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">keygen</code></td><td data-label="What it does"><span>Creates the agent wallet key file. Never overwrites an existing key and never prints it.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
-              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">status</code></td><td data-label="What it does"><span>Shows the agent's CELO, USD₮ and cNGN balances, the tag and the cap.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
-              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">quote --amount 10</code></td><td data-label="What it does"><span>Gets a free Textile FX preview for the amount. No wallet needed.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
-              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">pay <span class="nw">--to ada</span> <span class="nw">--amount 10</span> <span class="nw">[--execute]</span> <span class="nw">[--yes]</span></code></td><td data-label="What it does"><span>Runs a payout to a named contact. A dry run unless <code class="inline" translate="no">--execute</code> is given.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
-              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">ask "send $10 to ada"</code></td><td data-label="What it does"><span>Same as <code class="inline" translate="no">pay</code>, from a plain-language request. Accepts the same flags.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
-              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">register <span class="nw">[--repo &lt;url&gt;]</span> <span class="nw">[--execute]</span></code></td><td data-label="What it does"><span>Registers the agent's ERC-8004 identity, then writes its id into the registration file.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
-              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">verify &lt;hash&gt;</code></td><td data-label="What it does"><span>Reads a transaction from Celo and shows the attribution tags it carries. Needs the key file from <code class="inline" translate="no">keygen</code>.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">status</code></td><td data-label="What it does"><span>Shows the agent's CELO, USD₮ and cNGN balances, the tag, both caps, the USD paid in the last 24 hours and the number of open payment requests. Needs the key file.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">quote <span class="nw">--amount N</span> <span class="nw">[--corridor ID]</span></code></td><td data-label="What it does"><span>Gets a free Textile FX preview. The amount is in the token the payer sends; without <code class="inline" translate="no">--amount</code> it quotes 10 USD₮ or ₦14,400. No wallet needed.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">pay <span class="nw">--to NAME</span> <span class="nw">--amount N</span> <span class="nw">[--corridor ID]</span> <span class="nw">[--execute]</span> <span class="nw">[--yes]</span></code></td><td data-label="What it does"><span>Runs a payout to a named contact. A dry run unless <code class="inline" translate="no">--execute</code> is given; <code class="inline" translate="no">--yes</code> skips the typed confirmation.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">ask "send $10 to ada" <span class="nw">[--execute]</span> <span class="nw">[--yes]</span></code></td><td data-label="What it does"><span>Same as <code class="inline" translate="no">pay</code> in the <code class="inline" translate="no">usdt-cngn</code> corridor, from a plain-language request.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">request <span class="nw">--to NAME</span> <span class="nw">--amount N</span> <span class="nw">[--corridor ID]</span> <span class="nw">[--note TEXT]</span> <span class="nw">[--hours H]</span></code></td><td data-label="What it does"><span>Creates a payment link for a contact. Makes the amount unique, saves the request in <code class="inline" translate="no">requests.json</code> and prints the exact amount and the link. <code class="inline" translate="no">--hours</code> defaults to 48 (most 168); a note is up to 80 characters.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">requests</code></td><td data-label="What it does"><span>Lists every request with its status (open, received, paid or expired), amount, corridor, name, expiry and link, plus its deposit, receipt or error when there is one.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">watch <span class="nw">[--execute]</span> <span class="nw">[--interval S]</span></code></td><td data-label="What it does"><span>Autopilot. Checks for deposits every <code class="inline" translate="no">--interval</code> seconds (default 15, at least 5) and pays matched requests. A dry run unless <code class="inline" translate="no">--execute</code> is given.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">retry <span class="nw">--request ID</span> <span class="nw">[--execute]</span> <span class="nw">[--yes]</span></code></td><td data-label="What it does"><span>Runs again an autopilot payout that failed after its deposit was recorded. Only for a request that is unpaid, has a saved error and sent no swap or payout. A dry run unless <code class="inline" translate="no">--execute</code> is given; <code class="inline" translate="no">--yes</code> skips the typed confirmation.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">register <span class="nw">[--repo URL]</span> <span class="nw">[--execute]</span></code></td><td data-label="What it does"><span>Registers the agent's ERC-8004 identity, then writes its id into the registration file. Needs the key file.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">verify &lt;hash&gt;</code></td><td data-label="What it does"><span>Reads a transaction from Celo and shows the attribution tags it carries. Needs the key file.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
             </tbody>
           </table>
+        </div>
+        <div class="card-b">
+          <p class="small muted"><code class="inline" translate="no">ID</code> is <code class="inline" translate="no">usdt-cngn</code> (the default) or <code class="inline" translate="no">cngn-usdt</code>. <code class="inline" translate="no">NAME</code> must be a contact in <code class="inline" translate="no">contacts.json</code>; case does not matter.</p>
         </div>
         <div class="card-f">
           <div class="stack qs">
@@ -184,15 +255,19 @@ npm test
 node src/agent.mjs keygen
 cp contacts.example.json contacts.json
 node src/agent.mjs quote --amount 10
-node src/agent.mjs pay --to ada --amount 10</pre>
+node src/agent.mjs pay --to ada --amount 10
+node src/agent.mjs request --to ada --amount 5
+node src/agent.mjs watch</pre>
               <button class="icon-btn" type="button" aria-label="Copy quick start commands" data-copy-label="Commands copied" data-copy="npm install
 npm test
 node src/agent.mjs keygen
 cp contacts.example.json contacts.json
 node src/agent.mjs quote --amount 10
-node src/agent.mjs pay --to ada --amount 10"><svg class="i"><use href="#i-copy"/></svg></button>
+node src/agent.mjs pay --to ada --amount 10
+node src/agent.mjs request --to ada --amount 5
+node src/agent.mjs watch"><svg class="i"><use href="#i-copy"/></svg></button>
             </div>
-            <p class="hint">Add your recipient's address to <code class="inline" translate="no">contacts.json</code> first. The last command is a dry run and sends nothing.</p>
+            <p class="hint">Add your recipient's address to <code class="inline" translate="no">contacts.json</code> first. <code class="inline" translate="no">pay</code> and <code class="inline" translate="no">watch</code> without <code class="inline" translate="no">--execute</code> are dry runs and send nothing.</p>
           </div>
         </div>
       </section>
@@ -203,17 +278,25 @@ node src/agent.mjs pay --to ada --amount 10"><svg class="i"><use href="#i-copy"/
           <table class="table">
             <thead><tr><th scope="col">Variable</th><th scope="col">Default</th><th scope="col">What it controls</th></tr></thead>
             <tbody>
-              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">MAX_USD</code></td><td data-label="Default" class="num"><span>25</span></td><td data-label="What it controls"><span>Largest payout in USD. Checked before any quote.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">MAX_USD</code></td><td data-label="Default" class="num"><span>25</span></td><td data-label="What it controls"><span>Largest single payout, in USD.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">MAX_DAILY_USD</code></td><td data-label="Default" class="num"><span>100</span></td><td data-label="What it controls"><span>Most USD paid out in any rolling 24 hours, counted from <code class="inline" translate="no">receipts.jsonl</code>.</span></td></tr>
               <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">MAX_SLIPPAGE_BPS</code></td><td data-label="Default" class="num"><span>300</span></td><td data-label="What it controls"><span>How much worse the firm quote may be than the preview, in basis points (300 = 3%).</span></td></tr>
               <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">ATTRIBUTION_CODE</code></td><td data-label="Default"><span class="mono nw" translate="no">celo_7360953d1b53</span></td><td data-label="What it controls"><span>Tag added to every transaction. 1–32 characters of a–z, 0–9 and _.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">AGENT_ADDRESS</code></td><td data-label="Default"><span class="mono" translate="no">0x8a69…7a1e</span></td><td data-label="What it controls"><span>Agent address used when there is no key file: by <code class="inline" translate="no">request</code> and by a dry-run <code class="inline" translate="no">watch</code>.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">SITE_URL</code></td><td data-label="Default"><span class="mono" translate="no">https://<wbr>deeeko.github.io/<wbr>celo-naira-payout-agent</span></td><td data-label="What it controls"><span>Site used in payment links and receipt links.</span></td></tr>
               <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">CELO_AGENT_KEY_FILE</code></td><td data-label="Default"><span class="mono" translate="no">~/.celo-naira-agent/<wbr>agent.json</span></td><td data-label="What it controls"><span>Where the agent's private key is stored, outside the repo.</span></td></tr>
-              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">CONTACTS_FILE</code></td><td data-label="Default"><span class="mono nw" translate="no">contacts.json</span></td><td data-label="What it controls"><span>The allow-list of recipients and your own wallets. Git-ignored.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">CONTACTS_FILE</code></td><td data-label="Default"><span class="mono nw" translate="no">contacts.json</span></td><td data-label="What it controls"><span>The allow-list of recipients and your own wallets, in the repo folder. Git-ignored.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">RECEIPTS_FILE</code></td><td data-label="Default"><span class="mono nw" translate="no">receipts.jsonl</span></td><td data-label="What it controls"><span>Log of executed payouts and unmatched deposits. The daily cap is counted from it. Git-ignored.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">REQUESTS_FILE</code></td><td data-label="Default"><span class="mono nw" translate="no">requests.json</span></td><td data-label="What it controls"><span>Payment requests and their status. Git-ignored.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">WATCH_STATE_FILE</code></td><td data-label="Default"><span class="mono nw" translate="no">watch-state.json</span></td><td data-label="What it controls"><span>The last block autopilot checked, so it resumes where it stopped. Written only with <code class="inline" translate="no">--execute</code>. Git-ignored.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">CELO_RPC_URL</code></td><td data-label="Default"><span>Forno</span></td><td data-label="What it controls"><span>RPC endpoint autopilot reads deposits from. Read in <code class="inline" translate="no">src/watch.mjs</code>; other commands use Forno.</span></td></tr>
               <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">TEXTILE_API</code></td><td data-label="Default"><span class="mono" translate="no">https://<wbr>api.textilecredit.com/<wbr>v2</span></td><td data-label="What it controls"><span>Textile FX RFQ endpoint for previews and firm quotes.</span></td></tr>
-              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">ANTHROPIC_API_KEY</code></td><td data-label="Default"><span>Not set</span></td><td data-label="What it controls"><span>Optional. Lets <code class="inline" translate="no">ask</code> understand free-form requests. Without it, a plain parser handles “send $10 to ada”. Never commit it.</span></td></tr>
+              <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">ANTHROPIC_API_KEY</code></td><td data-label="Default"><span>Not set</span></td><td data-label="What it controls"><span>Optional. Lets <code class="inline" translate="no">ask</code> understand free-form requests. Without it, a plain parser handles “send $10 to ada”. Read in <code class="inline" translate="no">src/intent.mjs</code>. Never commit it.</span></td></tr>
               <tr><td class="lead-cell" data-label="Variable"><code class="inline" translate="no">ANTHROPIC_MODEL</code></td><td data-label="Default"><span class="mono nw" translate="no">claude-sonnet-5-5</span></td><td data-label="What it controls"><span>Model used by <code class="inline" translate="no">ask</code>. Used only when <code class="inline" translate="no">ANTHROPIC_API_KEY</code> is set.</span></td></tr>
             </tbody>
           </table>
         </div>
+        <div class="card-f"><span class="small muted">File defaults are relative to the repo folder.</span></div>
       </section>
 
       <section class="card" id="addresses" aria-labelledby="addr-h">
@@ -224,6 +307,7 @@ node src/agent.mjs pay --to ada --amount 10"><svg class="i"><use href="#i-copy"/
             <tbody>
               <tr><td class="lead-cell strong" data-label="Name">Agent wallet</td><td data-label="Address"><span class="addr-cell"><a class="mono addr" translate="no" href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e" aria-label="Agent wallet on Celoscan">0x8a695cf54CB44753c8b784EB36d266f748617a1e</a><button class="icon-btn sm" type="button" aria-label="Copy agent wallet address" data-copy="0x8a695cf54CB44753c8b784EB36d266f748617a1e" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></td></tr>
               <tr><td class="lead-cell strong" data-label="Name">ERC-8004 Identity Registry</td><td data-label="Address"><span class="addr-cell"><a class="mono addr" translate="no" href="https://celoscan.io/address/0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" aria-label="ERC-8004 Identity Registry on Celoscan">0x8004A169FB4a3325136EB29fA0ceB6D2e539a432</a><button class="icon-btn sm" type="button" aria-label="Copy Identity Registry address" data-copy="0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></td></tr>
+              <tr><td class="lead-cell strong" data-label="Name">ERC-8004 Reputation Registry</td><td data-label="Address"><span class="addr-cell"><a class="mono addr" translate="no" href="https://celoscan.io/address/0x8004BAa17C55a88189AE136b182e5fdA19dE9b63" aria-label="ERC-8004 Reputation Registry on Celoscan">0x8004BAa17C55a88189AE136b182e5fdA19dE9b63</a><button class="icon-btn sm" type="button" aria-label="Copy Reputation Registry address" data-copy="0x8004BAa17C55a88189AE136b182e5fdA19dE9b63" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></td></tr>
               <tr><td class="lead-cell strong" data-label="Name">USD₮</td><td data-label="Address"><span class="addr-cell"><a class="mono addr" translate="no" href="https://celoscan.io/address/0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e" aria-label="USD₮ token on Celoscan">0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e</a><button class="icon-btn sm" type="button" aria-label="Copy USD₮ token address" data-copy="0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></td></tr>
               <tr><td class="lead-cell strong" data-label="Name">cNGN</td><td data-label="Address"><span class="addr-cell"><a class="mono addr" translate="no" href="https://celoscan.io/address/0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f" aria-label="cNGN token on Celoscan">0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f</a><button class="icon-btn sm" type="button" aria-label="Copy cNGN token address" data-copy="0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></td></tr>
               <tr><td class="lead-cell" data-label="Name"><div><div class="strong">Textile LimitOrderReactor</div><div class="micro muted">Per the hackathon brief</div></div></td><td data-label="Address"><span class="addr-cell"><a class="mono addr" translate="no" href="https://celoscan.io/address/0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3" aria-label="Textile LimitOrderReactor on Celoscan">0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3</a><button class="icon-btn sm" type="button" aria-label="Copy Textile reactor address" data-copy="0xa9AA0a64769cBed4d3B1Ceb4Df01CdE915C235b3" data-copy-label="Address copied"><svg class="i"><use href="#i-copy"/></svg></button></span></td></tr>
@@ -236,16 +320,24 @@ node src/agent.mjs pay --to ada --amount 10"><svg class="i"><use href="#i-copy"/
       <section class="card" id="faq" aria-labelledby="faq-h">
         <div class="card-h"><h2 id="faq-h">FAQ</h2></div>
         <details class="faq">
-          <summary>Can this website send money?</summary>
-          <div class="faq-a">No. The site is read-only. It has no wallet connection and holds no keys. It reads public data from Celo (Forno RPC and Blockscout) and a published rate file. Payouts are sent only by the agent, from the command line, after a firm quote and the owner's confirmation.</div>
+          <summary>Can the website move money?</summary>
+          <div class="faq-a">Not the agent's. The site holds no keys and reads public data from Celo (Forno RPC and Blockscout) and a published rate file. Payouts are sent only by the agent, on its owner's computer. Two pages hand something to your own wallet: a payment link's “Open in wallet” button fills in a transfer that you approve there, and a receipt can ask your wallet to send your rating of the payout. Neither can happen without your approval in your wallet.</div>
+        </details>
+        <details class="faq">
+          <summary>Does autopilot need a server?</summary>
+          <div class="faq-a">It needs one computer that runs <code class="inline" translate="no">node src/agent.mjs watch --execute</code> and holds the key file, such as the owner's laptop or a small server. It pays only while it is running. With <code class="inline" translate="no">--execute</code> it saves the last block it checked, so after a restart it picks up deposits that arrived while it was off. A deposit sent before its link expired is still paid.</div>
+        </details>
+        <details class="faq">
+          <summary>What if two people send the same amount?</summary>
+          <div class="faq-a">Each open request has its own exact amount, so a given amount points to at most one link. If two deposits of that amount arrive, only the first one, in chain order, is paid. The second no longer matches an open request: it is logged as unmatched, is not paid, and stays in the agent wallet for the owner to return by hand.</div>
         </details>
         <details class="faq">
           <summary>Where does the exchange rate come from?</summary>
-          <div class="faq-a">From a free Textile FX preview for $10 of USD₮, which includes Textile's fee. A GitHub Action fetches it every 30 minutes and publishes it with the site. If the preview is unavailable, the site falls back to Textile's market bid for USD₮/NGN and labels it as before fees. A real payout always uses a fresh firm quote at the time it runs.</div>
+          <div class="faq-a">From free Textile FX previews, which include Textile's fee: $10 of USD₮ for the naira corridor and ₦14,400 of cNGN for the dollar corridor. A GitHub Action fetches them every 30 minutes and publishes them with the site. If the naira preview is unavailable, the site falls back to Textile's market bid for USD₮/NGN and labels it as before fees. A real payout always uses a fresh firm quote at the time it runs.</div>
         </details>
         <details class="faq">
           <summary>Is it custodial?</summary>
-          <div class="faq-a">The agent wallet is meant to hold funds only for the payout in progress: the payer funds it, and one run converts the USD₮ and pays out the cNGN. The owner keeps the private key in a local file. This website never holds funds.</div>
+          <div class="faq-a">The agent wallet is meant to hold funds only for the payout in progress: the payer funds it, and one run converts the deposit and pays it out. A deposit that matches no request stays in the agent wallet until the owner returns it. The owner keeps the private key in a local file. This website never holds funds.</div>
         </details>
         <details class="faq">
           <summary>What is the attribution tag?</summary>
@@ -253,11 +345,11 @@ node src/agent.mjs pay --to ada --amount 10"><svg class="i"><use href="#i-copy"/
         </details>
         <details class="faq">
           <summary>What if the price moves?</summary>
-          <div class="faq-a">Before converting, the agent compares the firm quote with the free preview. If the firm quote would pay more than 3% less cNGN, it stops and sends nothing. If the quote expires while the approval is confirming, the swap is not sent and you run it again for a fresh quote.</div>
+          <div class="faq-a">Before converting, the agent compares the firm quote with the free preview. If the firm quote would deliver more than 3% less, it stops and sends nothing. If the quote expires while the approval is confirming, the swap is not sent. Run a manual payout again for a fresh quote. Under autopilot, the error is saved on the request and autopilot stops, so the owner decides what to do.</div>
         </details>
         <details class="faq">
           <summary>Can the AI change the limits?</summary>
-          <div class="faq-a">No. The optional AI only turns a request like “send $10 to ada” into a contact name and an amount. It never sees an address. Code then looks up the name in your contacts and applies the cap, the allow-list and the price check, exactly as for <code class="inline" translate="no">pay</code>.</div>
+          <div class="faq-a">No. The optional AI only turns a request like “send $10 to ada” into a contact name and an amount. It never sees an address. Code then looks up the name in your contacts and applies the caps, the allow-list and the price check, exactly as for <code class="inline" translate="no">pay</code>. Autopilot does not use the AI at all.</div>
         </details>
       </section>
 
@@ -269,6 +361,8 @@ node src/agent.mjs pay --to ada --amount 10"><svg class="i"><use href="#i-copy"/
         <ul class="toc">
           <li><a href="#overview">Overview</a></li>
           <li><a href="#flow">How a payout runs</a></li>
+          <li><a href="#links">Payment links and autopilot</a></li>
+          <li><a href="#receipts">Receipts and reviews</a></li>
           <li><a href="#safeguards">Safeguards</a></li>
           <li><a href="#cli">Command line</a></li>
           <li><a href="#config">Configuration</a></li>
@@ -288,18 +382,18 @@ node src/agent.mjs pay --to ada --amount 10"><svg class="i"><use href="#i-copy"/
     <div class="cols">
       <div>
         <div class="foot-brand"><img src="logo.svg" alt="" width="28" height="28">Naira Payout</div>
-        <p class="small soft" style="max-width:40ch">An agent that converts USD₮ to cNGN on Textile FX and pays an approved recipient on Celo.</p>
+        <p class="small soft" style="max-width:40ch">An agent that converts between USD₮ and cNGN on Textile FX and pays an approved recipient on Celo.</p>
       </div>
       <div>
         <h4>Product</h4>
-        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="pay.html">Payment links</a></li><li><a href="autopilot.html">Autopilot</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
       </div>
       <div>
         <h4>Resources</h4>
         <ul><li><a href="docs.html">Docs</a></li><li><a href="https://github.com/deeeko/celo-naira-payout-agent">Source code</a></li><li><a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e">Agent on Celoscan</a></li><li><a href="https://fx-docs.textilecredit.com">Textile FX docs</a></li></ul>
       </div>
     </div>
-    <div class="base"><span>Built for Agents Open for Business on Celo · Track 3: Stablecoin Corridors</span><span>Data: Celo Forno RPC · Blockscout · Textile FX</span></div>
+    <div class="base"><span>Built for Agents Open for Business on Celo · Track 3: Stablecoin Corridors</span><span class="foot-legal"><a href="privacy.html">Privacy policy</a> · <a href="terms.html">Terms</a> · <button class="linklike" type="button" data-consent-open>Privacy choices</button></span><span>Data: Celo Forno RPC · Blockscout · Textile FX</span></div>
   </div>
 </footer>
 <script type="module" src="js/docs.js"></script>

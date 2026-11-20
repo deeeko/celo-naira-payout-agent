@@ -5,6 +5,13 @@
    for single accent words. Mono for addresses, hashes and code only.
    ===================================================================== */
 
+/* Self-hosted type (Indian Type Foundry, Fontshare free licence): identical on every device, no third-party request. */
+@font-face { font-family: "General Sans"; src: url("fonts/GeneralSans-300.woff2") format("woff2"); font-weight: 300; font-style: normal; font-display: swap; }
+@font-face { font-family: "General Sans"; src: url("fonts/GeneralSans-400.woff2") format("woff2"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "General Sans"; src: url("fonts/GeneralSans-500.woff2") format("woff2"); font-weight: 500; font-style: normal; font-display: swap; }
+@font-face { font-family: "General Sans"; src: url("fonts/GeneralSans-600.woff2") format("woff2"); font-weight: 600; font-style: normal; font-display: swap; }
+@font-face { font-family: "Sentient"; src: url("fonts/Sentient-500-italic.woff2") format("woff2"); font-weight: 500; font-style: italic; font-display: swap; }
+
 :root {
   /* color */
   --bg: #040806;
@@ -60,8 +67,10 @@ body {
   margin: 0; min-height: 100vh; display: flex; flex-direction: column;
   background: var(--bg); color: var(--text);
   font: 400 var(--fs-body)/1.55 var(--sans);
-  -webkit-font-smoothing: antialiased; overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip; /* not "hidden": hidden makes body a scroll container and breaks position:sticky in Safari */
 }
+button, input, select, textarea, output { font-family: inherit; } /* Safari doesn't inherit fonts into form controls */
 main { flex: 1; position: relative; z-index: 1; }
 a { color: inherit; text-decoration: none; }
 img, svg { display: block; }
@@ -423,6 +432,44 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); opacity: 0; z-index: 100; padding: 11px 16px; border-radius: var(--r-pill); background: #fff; color: var(--on-light); font-weight: 500; font-size: 14px; box-shadow: var(--shadow); transition: opacity 160ms ease, transform 160ms var(--ease); pointer-events: none; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
+/* ---------- privacy consent ---------- */
+.consent {
+  position: fixed; z-index: 80; left: 50%; bottom: 18px; width: min(680px, calc(100vw - 32px));
+  display: flex; align-items: center; gap: 18px; padding: 16px 18px; border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255,255,255,.07), rgba(255,255,255,.02)), rgba(8, 20, 14, .82);
+  border: 1px solid rgba(255, 255, 255, .1); box-shadow: inset 0 1px 0 rgba(255,255,255,.1), 0 24px 60px rgba(0,0,0,.5);
+  backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+  transform: translate(-50%, 16px); opacity: 0; transition: transform .32s var(--ease), opacity .32s ease;
+}
+.consent.shown { transform: translate(-50%, 0); opacity: 1; }
+.consent.leaving { transform: translate(-50%, 16px); opacity: 0; }
+.consent h2 { font-size: 14.5px; font-weight: 600; letter-spacing: 0; margin-bottom: 4px; }
+.consent p { font-size: 13.5px; color: var(--text-2); line-height: 1.5; }
+.consent-actions { display: flex; gap: 8px; flex: none; }
+.consent-actions .btn { min-width: 92px; } /* equal weight: declining is as easy as accepting */
+@media (min-width: 1100px) { .consent { left: calc(50% + (var(--sb-w) + 12px) / 2); } }
+@media (max-width: 640px) {
+  .consent { flex-direction: column; align-items: stretch; bottom: 12px; }
+  .consent-actions .btn { flex: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .consent { transition: none; } }
+/* footer "Privacy choices" is a button styled as a link */
+.linklike { background: none; border: 0; padding: 0; font: inherit; color: var(--text-2); cursor: pointer; font-size: 14px; }
+.linklike:hover { color: var(--text); }
+
+/* long-form legal pages */
+.prose { max-width: 72ch; }
+.prose h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; margin: 34px 0 10px; scroll-margin-top: 96px; }
+.prose h2:first-child { margin-top: 0; }
+.prose p, .prose li { color: var(--text-2); font-size: 15px; line-height: 1.7; }
+.prose p + p { margin-top: 12px; }
+.prose ul { padding-left: 20px; margin: 10px 0; display: grid; gap: 6px; }
+.prose strong { color: var(--text); font-weight: 600; }
+.prose a { color: var(--mint); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+.prose table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+.prose th, .prose td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--text-2); }
+.prose th { color: var(--text-3); font-weight: 500; font-size: 12.5px; }
+
 /* ---------- footer ---------- */
 .site-footer { position: relative; z-index: 1; border-top: 1px solid var(--line); margin-top: 24px; }
 .site-footer .cols { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 28px; padding: 40px 0 28px; }
@@ -447,9 +494,20 @@ table.table { width: 100%; border-collapse: collapse; font-size: 14px; }
   .card-h, .card-b { padding-left: 18px; padding-right: 18px; }
   .site-footer .cols { grid-template-columns: 1fr 1fr; }
   .site-footer .cols > :first-child { grid-column: 1 / -1; }
-  .nav-brand span { display: none; }
+  /* phones: a fixed, full-width glass app bar (brand left, menu right) */
+  body { padding-top: 60px; }
+  .nav-wrap { position: fixed; top: 0; left: 0; right: 0; padding: 0; }
+  .nav {
+    width: 100%; max-width: none; border-radius: 0; border-width: 0 0 1px; min-height: 60px;
+    padding: 10px 12px 10px 16px; background: rgba(4, 10, 7, .74); box-shadow: 0 10px 28px rgba(0, 0, 0, .28);
+  }
+  .nav-brand { margin-right: auto; font-size: 16px; gap: 10px; }
+  .nav-brand img { width: 32px; height: 32px; }
   .nav-links { display: none; }
   .nav .btn-secondary { display: none; }
+  .nav .menu-btn { width: 40px; height: 40px; border-radius: 12px; }
+  .hero { padding-top: 44px; }
+  .page-head { padding-top: 36px; }
   /* tables become stacked rows */
   .table thead { display: none; }
   .table, .table tbody, .table tr, .table td { display: block; width: 100%; }

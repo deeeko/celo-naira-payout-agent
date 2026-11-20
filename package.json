@@ -4,7 +4,10 @@
   "description": "Agent that pays out in cNGN on Celo via Textile FX",
   "scripts": {
     "test": "node --test",
-    "start": "node src/agent.mjs"
+    "start": "node src/agent.mjs",
+    "quote": "node src/agent.mjs quote",
+    "requests": "node src/agent.mjs requests",
+    "watch": "node src/agent.mjs watch"
   },
   "keywords": [],
   "author": "",

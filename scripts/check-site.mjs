@@ -41,6 +41,34 @@ for (const page of pages) {
   }
 }
 
+// pages linked from JavaScript (e.g. el("a", { href: "privacy.html" })) must exist too
+for (const file of ["assets/core.js", ...fs.readdirSync(path.join(SITE, "js")).map((f) => "js/" + f)].filter((f) => f.endsWith(".js"))) {
+  const src = fs.readFileSync(path.join(SITE, file), "utf8");
+  for (const m of src.matchAll(/href:\s*["'`]([a-z0-9-]+\.html)/gi)) {
+    if (!fs.existsSync(path.join(SITE, m[1]))) fail(`${file}: links to missing page "${m[1]}"`);
+  }
+}
+
+// every url() in the stylesheet must exist and be allowed by each page's CSP (fonts were once silently blocked)
+const css = fs.readFileSync(path.join(SITE, "assets", "styles.css"), "utf8");
+for (const m of css.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)) {
+  const ref = m[1];
+  if (/^data:/i.test(ref)) { fail(`styles.css: data: URL "${ref.slice(0, 30)}..." is blocked by the CSP`); continue; }
+  if (/^https?:/i.test(ref)) {
+    for (const page of pages) {
+      const csp = (fs.readFileSync(path.join(SITE, page), "utf8").match(/http-equiv="Content-Security-Policy" content="([^"]+)"/) || [])[1] || "";
+      const host = new URL(ref).origin;
+      if (!csp.includes(host)) fail(`${page}: CSP does not allow ${host} used in styles.css`);
+    }
+    continue;
+  }
+  if (!fs.existsSync(path.join(SITE, "assets", ref.split(/[?#]/)[0]))) fail(`styles.css: missing file "${ref}"`);
+}
+for (const page of pages) {
+  const csp = (fs.readFileSync(path.join(SITE, page), "utf8").match(/http-equiv="Content-Security-Policy" content="([^"]+)"/) || [])[1] || "";
+  if (/@font-face/.test(css) && /url\(\s*["']?fonts\//.test(css) && !/font-src[^;]*'self'/.test(csp)) fail(`${page}: CSP font-src must include 'self' for the self-hosted fonts`);
+}
+
 // every script parses
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) => (d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]));
 for (const file of walk(SITE).filter((f) => f.endsWith(".js") && !f.includes(`${path.sep}_spec${path.sep}`))) {

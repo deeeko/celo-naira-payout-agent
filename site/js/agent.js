@@ -1,4 +1,4 @@
-import { initChrome, AGENT, AGENT_ID, REGISTRY, TAG, celoscanAddr, num2, short, lagosClock, $, el, badge, icon, loadIdentity, loadBalances } from "../assets/core.js";
+import { initChrome, AGENT, AGENT_ID, REGISTRY, REPUTATION, SEL, TAG, TOKENS, EXPLORER_API, celoscanAddr, num2, short, lagosClock, $, el, badge, icon, getJson, readContract, loadIdentity, loadBalances } from "../assets/core.js";
 
 initChrome();
 
@@ -111,5 +111,111 @@ async function renderBalances() {
 
 $("#bal-refresh").addEventListener("click", renderBalances);
 
+// ---------- reviews (ERC-8004 Reputation Registry) ----------
+const REVIEW_COLS = 4;
+const reviewEmptyRow = (message) => el("tr", { class: "empty" }, el("td", { colspan: String(REVIEW_COLS) }, message));
+
+/** Text-only star display: rounded to whole stars, exact value in the accessible label. */
+function stars(value) {
+  const full = Math.max(0, Math.min(5, Math.round(value)));
+  const wrap = el("span", { class: "stars", role: "img", "aria-label": `${value.toFixed(1)} out of 5 stars` });
+  for (let i = 0; i < 5; i++) wrap.append(el("span", { class: i < full ? "on" : "off", "aria-hidden": "true" }, "★"));
+  return wrap;
+}
+
+/** Addresses (lowercase) that ever sent USD₮ or cNGN to the agent, from Blockscout. Reads up to 5 pages. */
+async function loadPayers() {
+  const tokens = new Set([TOKENS.USDT.address, TOKENS.cNGN.address].map((a) => a.toLowerCase()));
+  const payers = new Set();
+  let next = null;
+  for (let page = 0; page < 5; page++) {
+    const qs = new URLSearchParams({ type: "ERC-20", filter: "to", ...(next ?? {}) });
+    const d = await getJson(`${EXPLORER_API}/addresses/${AGENT}/token-transfers?${qs}`);
+    if (!Array.isArray(d.items)) throw new Error("unexpected explorer response");
+    for (const t of d.items) {
+      const token = String(t.token?.address_hash ?? t.token?.address ?? "").toLowerCase();
+      const to = String(t.to?.hash ?? "").toLowerCase();
+      const from = String(t.from?.hash ?? "").toLowerCase();
+      if (tokens.has(token) && to === AGENT.toLowerCase() && from) payers.add(from);
+    }
+    next = d.next_page_params ?? null;
+    if (!next) break;
+  }
+  return payers;
+}
+
+async function loadReviews() {
+  const [clients] = await readContract(REPUTATION, SEL.getClients, ["uint256"], [AGENT_ID], ["address[]"]);
+  if (!clients.length) return [];
+  const [who, idx, values, decimals, tag1s, tag2s, revoked] = await readContract(
+    REPUTATION, SEL.readAllFeedback,
+    ["uint256", "address[]", "string", "string", "bool"], [AGENT_ID, clients, "", "", false],
+    ["address[]", "uint64[]", "int128[]", "uint8[]", "string[]", "string[]", "bool[]"],
+  );
+  const out = [];
+  who.forEach((client, i) => {
+    if (revoked[i] || tag1s[i] !== "starred") return;
+    const score = Number(values[i]) / 10 ** Number(decimals[i]); // 0–100
+    const s = score / 20;
+    if (!(s >= 0 && s <= 5)) return; // outside the 1–5 star scale: not a star rating
+    out.push({ client, index: idx[i], stars: s, context: tag2s[i] });
+  });
+  return out.reverse(); // most recently added clients last on chain, show them first
+}
+
+async function renderReviews() {
+  const region = $("#rev-region");
+  const rows = $("#rev-rows");
+  const err = $("#rev-error");
+  $("#rev-link").href = celoscanAddr(REPUTATION);
+  try {
+    // Reviews are required; the payer check is a best-effort extra and must not block them.
+    const [reviews, payers] = await Promise.all([loadReviews(), loadPayers().catch(() => null)]);
+
+    set($("#rev-count"), String(reviews.length));
+    if (!reviews.length) {
+      set($("#rev-avg"), DASH);
+      set($("#rev-verified"), payers ? "0" : DASH);
+      set($("#rev-status"), badge("No reviews yet", "neutral"));
+      set(rows, reviewEmptyRow("No reviews yet. Payers can rate a payout from its receipt."));
+      return;
+    }
+
+    const avg = reviews.reduce((a, r) => a + r.stars, 0) / reviews.length;
+    set($("#rev-avg"), avg.toFixed(1), stars(avg));
+    const verifiedCount = payers ? reviews.filter((r) => payers.has(r.client.toLowerCase())).length : null;
+    set($("#rev-verified"), verifiedCount == null ? DASH : String(verifiedCount));
+    set($("#rev-status"), badge(`${reviews.length} ${reviews.length === 1 ? "review" : "reviews"}`, "ok"));
+
+    set(rows, ...reviews.map((r) => {
+      const check = payers == null ? badge("Not checked", "neutral")
+        : payers.has(r.client.toLowerCase()) ? badge("Verified payer", "ok")
+        : badge("Unverified", "neutral");
+      return el("tr", {},
+        el("td", { class: "lead-cell", "data-label": "Rating" }, stars(r.stars)),
+        el("td", { "data-label": "Reviewer" }, el("a", { class: "mono", href: celoscanAddr(r.client), title: r.client }, short(r.client))),
+        el("td", { "data-label": "Payer check" }, check),
+        el("td", { "data-label": "Context" }, el("span", { class: "small soft" }, r.context ? r.context : DASH)),
+      );
+    }));
+
+    if (payers == null) {
+      set(err, el("div", { class: "alert warn" }, icon("alert"),
+        el("span", {}, "Couldn't check reviewers against deposits right now, so no one is marked as a verified payer. Reload to try again, or see deposits on ",
+          el("a", { class: "link", href: celoscanAddr(AGENT) + "#tokentxns" }, "Celoscan"), ".")));
+      err.hidden = false;
+    }
+  } catch {
+    for (const id of ["#rev-avg", "#rev-count", "#rev-verified"]) set($(id), DASH);
+    set($("#rev-status"), badge("Unavailable", "err"));
+    set(rows, reviewEmptyRow("Reviews couldn't be loaded."));
+    set(err, errorAlert("Could not read reviews from Celo right now. Try reloading, or view the reputation registry on", celoscanAddr(REPUTATION), "Celoscan"));
+    err.hidden = false;
+  } finally {
+    region.removeAttribute("aria-busy");
+  }
+}
+
 renderIdentity();
 renderBalances();
+renderReviews();

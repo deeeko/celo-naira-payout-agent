@@ -1,5 +1,51 @@
 // Safety rules. Pure functions, unit-tested. The AI layer can never bypass these.
-import { getAddress, isAddress, parseUnits, zeroAddress } from "viem";
+import { formatUnits, getAddress, isAddress, parseUnits, zeroAddress } from "viem";
+import { CORRIDORS, TOKENS } from "./config.mjs";
+
+/** Resolves a corridor id ("usdt-cngn" default, "cngn-usdt") to its sell/buy tokens. */
+export function getCorridor(id) {
+  const key = String(id ?? "usdt-cngn").trim().toLowerCase();
+  const c = CORRIDORS[key];
+  if (!c) throw new Error(`Unknown corridor "${id}". Use one of: ${Object.keys(CORRIDORS).join(", ")}`);
+  return { ...c, sellToken: TOKENS[c.sell], buyToken: TOKENS[c.buy] };
+}
+
+/** Amount in the corridor's sell token: "10", "$10", "₦14,400.50". At most 6 decimals. */
+export function parseAmount(input) {
+  return parseUsd(String(input ?? "").trim().replace(/^[₦$]/, "").replace(/,/g, ""));
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** USD value (6-dp base units) of one receipts.jsonl entry. Older usdt-cngn entries only have usdtSpent. */
+export function receiptUsdUnits(entry) {
+  const v = entry?.usd ?? entry?.usdtSpent;
+  if (v == null || !/^\d+(\.\d{1,6})?$/.test(String(v))) return 0n;
+  return parseUnits(String(v), 6);
+}
+
+/** Sum of USD paid out by executed payouts (entries with a payout hash) in the 24 h before `now`. */
+export function dailyUsedUnits(entries, now = Date.now()) {
+  let sum = 0n;
+  for (const e of entries ?? []) {
+    if (!e?.hashes?.payout) continue;
+    const t = Date.parse(e.at);
+    if (!Number.isFinite(t) || t <= now - DAY_MS || t > now + 60_000) continue;
+    sum += receiptUsdUnits(e);
+  }
+  return sum;
+}
+
+/** Throws if adding `addUnits` (6-dp USD) to what was already paid in the last 24 h exceeds `cap` (USD string). */
+export function assertDailyCap(usedUnits, addUnits, cap) {
+  const capUnits = parseUnits(String(cap), 6);
+  if (usedUnits + addUnits > capUnits) {
+    throw new Error(
+      `This payout (${formatUnits(addUnits, 6)} USD) would take the last 24 h total to ${formatUnits(usedUnits + addUnits, 6)} USD, ` +
+      `over the daily cap of ${cap} USD (MAX_DAILY_USD). Nothing was sent.`,
+    );
+  }
+}
 
 /** "10", "$10", "10.5" -> "10" / "10.5". At most 6 decimals (USDT precision). */
 export function parseUsd(input) {

@@ -6,3 +6,6 @@ receipts.jsonl
 agent.json
 site/rate.json
 site/_spec/
+requests.json
+watch-state.json
+*.tmp

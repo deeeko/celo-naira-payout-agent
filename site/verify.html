@@ -3,21 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://forno.celo.org https://celo.blockscout.com; style-src 'self' 'unsafe-inline' https://api.fontshare.com; font-src https://cdn.fontshare.com; img-src 'self'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://forno.celo.org https://celo.blockscout.com; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Verify a transaction · Naira Payout</title>
 <meta name="description" content="Paste any Celo transaction hash to check whether it carries the Naira Payout agent's ERC-8021 attribution tag.">
 <meta name="theme-color" content="#040806">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Naira Payout Agent">
-<meta property="og:description" content="Send dollars. They receive naira. Converts on Textile FX and pays out on Celo.">
+<meta property="og:description" content="Pay someone in naira or dollars. Converts on Textile FX and pays out on Celo.">
 <meta property="og:image" content="https://deeeko.github.io/celo-naira-payout-agent/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="icon" href="logo.png" type="image/png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<link rel="preconnect" href="https://api.fontshare.com">
-<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
-<link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=general-sans@300,400,500,600&f[]=sentient@500i&display=swap">
 <link rel="stylesheet" href="assets/styles.css">
 <style>
   #result pre.code-block { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -48,6 +45,10 @@
   <symbol id="i-scan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v4.5l3 2"/></symbol>
   <symbol id="i-chevron-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14.5 6-6 6 6 6"/></symbol>
   <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.5 10.5V7.8a3.5 3.5 0 0 1 7 0v2.7"/></symbol>
+  <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3.5V8h4.5"/><path d="M9 12.5h6M9 16h6"/></symbol>
 </svg>
 <div class="sky sky-sm" aria-hidden="true"></div>
 <aside class="sidebar" id="sidebar" aria-label="Site navigation">
@@ -61,11 +62,15 @@
     <a href="index.html" data-label="Overview"><svg class="i"><use href="#i-home"/></svg><span class="sb-label">Overview</span></a>
     <a href="quote.html" data-label="Quote"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Quote</span></a>
     <a href="transactions.html" data-label="Transactions"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Transactions</span></a>
+    <a href="pay.html" data-label="Payment links"><svg class="i"><use href="#i-link"/></svg><span class="sb-label">Payment links</span></a>
+    <a href="autopilot.html" data-label="Autopilot"><svg class="i"><use href="#i-bolt"/></svg><span class="sb-label">Autopilot</span></a>
     <p class="sb-group">Trust</p>
     <a href="agent.html" data-label="Agent"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
     <a href="verify.html" data-label="Verify"><svg class="i"><use href="#i-shield"/></svg><span class="sb-label">Verify</span></a>
     <p class="sb-group">Resources</p>
     <a href="docs.html" data-label="Docs"><svg class="i"><use href="#i-book"/></svg><span class="sb-label">Docs</span></a>
+    <a href="privacy.html" data-label="Privacy"><svg class="i"><use href="#i-lock"/></svg><span class="sb-label">Privacy</span></a>
+    <a href="terms.html" data-label="Terms"><svg class="i"><use href="#i-doc"/></svg><span class="sb-label">Terms</span></a>
     <a href="https://github.com/deeeko/celo-naira-payout-agent" data-label="GitHub"><svg class="i"><use href="#i-github"/></svg><span class="sb-label">GitHub</span><svg class="i ext"><use href="#i-ext"/></svg></a>
     <a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e" data-label="Agent on Celoscan"><svg class="i"><use href="#i-scan"/></svg><span class="sb-label">Agent on Celoscan</span><svg class="i ext"><use href="#i-ext"/></svg></a>
   </nav>
@@ -147,18 +152,18 @@
     <div class="cols">
       <div>
         <div class="foot-brand"><img src="logo.svg" alt="" width="28" height="28">Naira Payout</div>
-        <p class="small soft" style="max-width:40ch">An agent that converts USD₮ to cNGN on Textile FX and pays an approved recipient on Celo.</p>
+        <p class="small soft" style="max-width:40ch">An agent that converts between USD₮ and cNGN on Textile FX and pays an approved recipient on Celo.</p>
       </div>
       <div>
         <h4>Product</h4>
-        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="pay.html">Payment links</a></li><li><a href="autopilot.html">Autopilot</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
       </div>
       <div>
         <h4>Resources</h4>
         <ul><li><a href="docs.html">Docs</a></li><li><a href="https://github.com/deeeko/celo-naira-payout-agent">Source code</a></li><li><a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e">Agent on Celoscan</a></li><li><a href="https://fx-docs.textilecredit.com">Textile FX docs</a></li></ul>
       </div>
     </div>
-    <div class="base"><span>Built for Agents Open for Business on Celo · Track 3: Stablecoin Corridors</span><span>Data: Celo Forno RPC · Blockscout · Textile FX</span></div>
+    <div class="base"><span>Built for Agents Open for Business on Celo · Track 3: Stablecoin Corridors</span><span class="foot-legal"><a href="privacy.html">Privacy policy</a> · <a href="terms.html">Terms</a> · <button class="linklike" type="button" data-consent-open>Privacy choices</button></span><span>Data: Celo Forno RPC · Blockscout · Textile FX</span></div>
   </div>
 </footer>
 <script type="module" src="js/verify.js"></script>

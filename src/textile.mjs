@@ -5,31 +5,43 @@ import { toHex } from "viem";
 import { CHAIN, TEXTILE_API, TOKENS } from "./config.mjs";
 
 async function call(method, path, { body, headers } = {}) {
-  const res = await fetch(`${TEXTILE_API}${path}`, {
-    method,
-    headers: { "Content-Type": "application/json", ...headers },
-    body: body ? JSON.stringify(body) : undefined,
-    signal: AbortSignal.timeout(75_000), // firm quotes can block up to ~70s on a cold corridor
-  });
+  let res;
+  try {
+    res = await fetch(`${TEXTILE_API}${path}`, {
+      method,
+      headers: { "Content-Type": "application/json", ...headers },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(75_000), // firm quotes can block up to ~70s on a cold corridor
+    });
+  } catch (e) {
+    throw new Error(`Could not reach Textile FX (${e.cause?.code ?? e.name ?? e.message}). Check your connection and try again.`);
+  }
   const text = await res.text();
   let json;
   try { json = JSON.parse(text); } catch { json = { raw: text.slice(0, 300) }; }
   return { status: res.status, json };
 }
 
-export function rfqBody(sellAmount, taker) {
+const KNOWN = new Set(Object.values(TOKENS).map((t) => t.address.toLowerCase()));
+
+/** RFQ body for any supported pair. `sell` and `buy` are token addresses; amounts are base units. */
+export function rfqBody(sell, buy, sellAmount, taker) {
+  if (!KNOWN.has(String(sell).toLowerCase()) || !KNOWN.has(String(buy).toLowerCase()) || String(sell).toLowerCase() === String(buy).toLowerCase()) {
+    throw new Error("rfqBody: sell and buy must be two different supported tokens (USDT, cNGN)");
+  }
+  if (!/^\d+$/.test(String(sellAmount)) || BigInt(sellAmount) === 0n) throw new Error("rfqBody: sellAmount must be positive base units");
   return {
     chainId: CHAIN.id,
-    sellToken: TOKENS.USDT.address,
-    buyToken: TOKENS.CNGN.address,
+    sellToken: sell,
+    buyToken: buy,
     sellAmount: String(sellAmount),
     ...(taker ? { taker } : {}),
   };
 }
 
 /** Free, indicative price. No wallet, no proof, reserves nothing. */
-export async function preview(sellAmount) {
-  const r = await call("POST", "/rfq/preview", { body: rfqBody(sellAmount) });
+export async function preview(sell, buy, sellAmount) {
+  const r = await call("POST", "/rfq/preview", { body: rfqBody(sell, buy, sellAmount) });
   if (r.status !== 200) throw new Error(`Preview failed (${r.status}): ${JSON.stringify(r.json).slice(0, 300)}`);
   return r.json.data; // { status: "preview" | "no_quote", buyAmount, takerPays, feeAmount, ... }
 }
@@ -55,9 +67,9 @@ export async function signTakerControl(account) {
 }
 
 /** Firm, signed quote. Sends unsigned first; signs the proof only if Textile asks for it. */
-export async function firmQuote(account, sellAmount) {
+export async function firmQuote(account, sell, buy, sellAmount) {
   const send = (extra = {}) =>
-    call("POST", "/rfq/request", { body: { ...rfqBody(sellAmount, account.address), ...extra } });
+    call("POST", "/rfq/request", { body: { ...rfqBody(sell, buy, sellAmount, account.address), ...extra } });
   let r = await send();
   if (r.status === 401 && r.json?.error?.details?.reason === "proof_of_control_required") {
     r = await send({ takerProof: await signTakerControl(account) });

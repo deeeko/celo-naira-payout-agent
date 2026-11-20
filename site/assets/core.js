@@ -240,20 +240,31 @@ export async function loadTxByHash(hash) {
 
 // ---------- transaction meaning ----------
 /** "identity" | "approve" | "convert" | "payout" | "other" */
+const isStable = (addr) => [TOKENS.USDT.address, TOKENS.cNGN.address].some((a) => a.toLowerCase() === addr);
 export function txKind(tx) {
   const to = tx.to?.hash?.toLowerCase();
   if (to === REGISTRY.toLowerCase()) return "identity";
-  if (to === TOKENS.cNGN.address.toLowerCase() && tx.method === "transfer") return "payout";
-  if (to === TOKENS.USDT.address.toLowerCase() && tx.method === "approve") return "approve";
+  if (isStable(to) && tx.method === "transfer") return "payout"; // either corridor: cNGN or USD₮ paid out
+  if (isStable(to) && tx.method === "approve") return "approve";
   if (tx.token_transfers || /execute/i.test(tx.method ?? "")) return "convert";
   return "other";
 }
+/** "USD₮ → cNGN" when the explorer item carries token transfers, else null. */
+function swapDirection(tx) {
+  const tt = Array.isArray(tx.token_transfers) ? tx.token_transfers : [];
+  const sold = tt.find((t) => t.from?.hash?.toLowerCase() === AGENT.toLowerCase());
+  const got = tt.find((t) => t.to?.hash?.toLowerCase() === AGENT.toLowerCase());
+  const s = sold && tokenSymbol(sold.token?.address_hash ?? sold.token?.address);
+  const g = got && tokenSymbol(got.token?.address_hash ?? got.token?.address);
+  return s && g && s !== "token" && g !== "token" ? `${s} → ${g}` : null;
+}
 export function txLabel(tx) {
+  const sym = tokenSymbol(tx.to?.hash);
   switch (txKind(tx)) {
     case "identity": return tx.method === "register" ? "Registered identity" : tx.method === "setAgentURI" ? "Updated identity file" : "Updated identity";
-    case "payout": return "Paid cNGN to recipient";
-    case "approve": return /0{64}$/.test((tx.raw_input ?? "").slice(0, 138)) ? "Reset USD₮ allowance" : "Approved USD₮ for Textile";
-    case "convert": return "Converted USD₮ → cNGN";
+    case "payout": return `Paid ${sym} to recipient`;
+    case "approve": return /0{64}$/.test((tx.raw_input ?? "").slice(0, 138)) ? `Reset ${sym} allowance` : `Approved ${sym} for Textile`;
+    case "convert": { const d = swapDirection(tx); return d ? `Converted ${d}` : "Converted on Textile FX"; }
     default: return tx.method ? `Called ${tx.method}` : "Other transaction";
   }
 }
@@ -305,10 +316,66 @@ export function download(filename, text, type = "text/csv") {
 }
 
 // ---------- page chrome: nav, sidebar, copy buttons ----------
+// ---------- privacy consent ----------
+// No cookies, no analytics, fonts are self-hosted. The only OPTIONAL thing is remembering layout
+// preferences on this device (the sidebar state) in localStorage. The choice itself is stored under
+// CONSENT_KEY (needed to honour it). Declining keeps every feature working; nothing is remembered.
+const CONSENT_KEY = "np-consent";
+const CONSENT_VERSION = 2; // bumped: fonts are no longer part of the ask, so people are asked again
+export function getConsent() {
+  try {
+    const v = JSON.parse(localStorage.getItem(CONSENT_KEY) ?? "null");
+    return v && v.v === CONSENT_VERSION && (v.choice === "accepted" || v.choice === "declined") ? v.choice : null;
+  } catch { return null; }
+}
+function saveConsent(choice) {
+  try { localStorage.setItem(CONSENT_KEY, JSON.stringify({ v: CONSENT_VERSION, choice, at: new Date().toISOString() })); } catch { /* blocked: ask again next visit */ }
+  if (choice === "declined") { try { localStorage.removeItem(SB_KEY); } catch {} }
+}
+function applyConsent(choice) {
+  document.documentElement.dataset.consent = choice ?? "unset";
+}
+function consentBanner() {
+  document.getElementById("consent")?.remove();
+  const policy = el("a", { class: "link", href: "privacy.html" }, "The short version");
+  const accept = el("button", { class: "btn btn-secondary btn-sm", type: "button", "data-consent": "accepted" }, "Sure");
+  const decline = el("button", { class: "btn btn-secondary btn-sm", type: "button", "data-consent": "declined" }, "No thanks");
+  const box = el("section", { id: "consent", class: "consent", role: "dialog", "aria-modal": "false", "aria-labelledby": "consent-title", "aria-describedby": "consent-text" },
+    el("div", { class: "consent-body" },
+      el("h2", { id: "consent-title" }, "Quick one"),
+      el("p", { id: "consent-text" },
+        "We don't track you. No cookies, no analytics. Can we remember how you like the layout on this device? Everything works either way. ",
+        policy, ".")),
+    el("div", { class: "consent-actions" }, decline, accept));
+  box.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-consent]");
+    if (!b) return;
+    const choice = b.dataset.consent;
+    saveConsent(choice);
+    applyConsent(choice);
+    box.classList.add("leaving");
+    setTimeout(() => box.remove(), 220);
+    toast(choice === "accepted" ? "Got it, we'll remember your layout" : "No problem, nothing is stored");
+  });
+  document.body.append(box);
+  requestAnimationFrame(() => box.classList.add("shown"));
+  return box;
+}
+function initConsent() {
+  const choice = getConsent();
+  applyConsent(choice);
+  if (!choice) consentBanner();
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("[data-consent-open]")) return;
+    e.preventDefault();
+    consentBanner().querySelector("button")?.focus();
+  });
+}
+
 const SB_KEY = "np-sidebar";
 const store = {
-  get() { try { return localStorage.getItem(SB_KEY); } catch { return null; } },
-  set(v) { try { localStorage.setItem(SB_KEY, v); } catch { /* storage blocked: state just isn't remembered */ } },
+  get() { try { return getConsent() === "accepted" ? localStorage.getItem(SB_KEY) : null; } catch { return null; } },
+  set(v) { if (getConsent() !== "accepted") return; try { localStorage.setItem(SB_KEY, v); } catch { /* storage blocked */ } },
 };
 const desktop = () => matchMedia("(min-width: 1100px)").matches;
 
@@ -381,6 +448,7 @@ function initSidebar() {
 }
 
 export function initChrome() {
+  initConsent();
   const here = location.pathname.split("/").pop() || "index.html";
   for (const a of document.querySelectorAll(".nav-links a, .sb-nav a")) {
     if (a.getAttribute("href") === here) a.setAttribute("aria-current", "page");
