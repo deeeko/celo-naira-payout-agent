@@ -10,3 +10,6 @@ requests.json
 watch-state.json
 *.tmp
 registrations-state.json
+.vercel
+.vercel
+.env*
