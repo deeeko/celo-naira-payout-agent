@@ -4,3 +4,4 @@ contacts.json
 receipts.jsonl
 *.key
 agent.json
+site/rate.json
