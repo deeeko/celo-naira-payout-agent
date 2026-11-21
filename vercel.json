@@ -8,7 +8,8 @@
     "api/**/*.js": { "maxDuration": 15 }
   },
   "rewrites": [
-    { "source": "/api/explorer/:path*", "destination": "/api/explorer?path=:path*" }
+    { "source": "/api/explorer/:path*", "destination": "/api/explorer?path=:path*" },
+    { "source": "/@:tag", "destination": "/tag.html?t=:tag" }
   ],
   "headers": [
     {

@@ -151,8 +151,9 @@ export function registrationCaps(usdUnits, wallet) {
 /**
  * Owner payouts: `to` is a contact name in contacts.json. "Get paid" registrations: `recipientAddress` is the
  * registration's sender, `payer` the deposit's sender, `to` only a display name, `registrationId` the registration hash.
+ * nTag payouts: like registrations, with `recipientAddress` the tag owner, `to` "@tag" and `ntag` the tag (logged).
  */
-export async function pay({ to, amount, corridor = "usdt-cngn", execute = false, yes = false, requestId, recipientAddress, payer, registrationId } = {}) {
+export async function pay({ to, amount, corridor = "usdt-cngn", execute = false, yes = false, requestId, recipientAddress, payer, registrationId, ntag } = {}) {
   if (String(corridor).trim().toLowerCase() === "celo-cngn") {
     // Direct owner payouts only: never from a payment request or a "Get paid" registration.
     if (requestId != null || recipientAddress != null) getCorridor("celo-cngn"); // throws the "direct payouts only" message
@@ -258,7 +259,7 @@ export async function pay({ to, amount, corridor = "usdt-cngn", execute = false,
     const receiptUrl = receiptLink({ payout: hashes.payout, swap: hashes.swap, requestId });
     const no = receiptNo(hashes.payout);
     log({
-      corridor: c.id, to, recipient, requestId, ...(registrationId ? { registrationId, payer } : {}), receiptNo: no,
+      corridor: c.id, to, recipient, requestId, ...(registrationId ? { registrationId, payer } : {}), ...(ntag ? { ntag, payer } : {}), receiptNo: no,
       sold: { token: sell.symbol, amount: fmt(takerPays) },
       paid: { token: buy.symbol, amount: fmt(received) },
       usd: fmt(usdUnits),
