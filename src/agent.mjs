@@ -15,13 +15,20 @@
 //   node src/agent.mjs registrations                            list "Get paid" registrations found onchain
 //   node src/agent.mjs retry --request ID [--execute] [--yes]  re-run a failed autopilot payout (DRY RUN by default)
 //   node src/agent.mjs retry --registration HASH [--execute] [--yes]   same, for a "Get paid" registration
+//   node src/agent.mjs retry --ntag TX:LOGINDEX [--execute] [--yes]    same, for an nTag payment
+//   node src/agent.mjs retry --ntag TX:LOGINDEX --force-refused [--execute]   pay an nTag deposit autopilot refused (caps apply)
+//   node src/agent.mjs ntag <tag|address>                       look up an nTag: owner, name, since, claim tx, status
+//   node src/agent.mjs ntags                                    list every nTag that is held right now
+//   node src/agent.mjs pay @ada 10 [--corridor ID] [--execute]  pay an nTag's owner from the agent's own funds (caps apply)
+//   node src/agent.mjs pay --ntag ada --amount 10 [...]         same (PowerShell reads a bare @ada as splatting: quote it)
+//   node src/agent.mjs ntag-data @ada 10 [--token usdt|cngn]    the to/data to pay a tag from YOUR OWN wallet (no key used)
 //   node src/agent.mjs register --repo <url>                   ERC-8004 identity (DRY RUN unless --execute)
 //   node src/agent.mjs verify <txHash>                          show the attribution tag on a transaction
-import { erc20Abi, formatUnits, parseUnits } from "viem";
+import { createPublicClient, erc20Abi, formatUnits, http, isAddress, parseUnits } from "viem";
 import { verifyTx } from "@celo/attribution-tags";
 import {
-  AGENT_ADDRESS, ATTRIBUTION_CODE, CELO_MIN_USDT, DEFAULT_CORRIDOR, MAX_DAILY_USD, MAX_USD, MAX_WALLET_DAILY_USD,
-  MIN_CELO_RESERVE, TOKENS,
+  AGENT_ADDRESS, ATTRIBUTION_CODE, CELO_MIN_USDT, CHAIN, DEFAULT_CORRIDOR, MAX_DAILY_USD, MAX_USD, MAX_WALLET_DAILY_USD,
+  MIN_CELO_RESERVE, SITE_URL, TOKENS,
 } from "./config.mjs";
 import { keygen, loadAccount, makeClients } from "./chain.mjs";
 import { assertRecipient, dailyUsedUnits, getCorridor, getPayCorridor, parseAmount, resolveContact } from "./guards.mjs";
@@ -34,7 +41,11 @@ import {
 } from "./registrations.mjs";
 import { preview } from "./textile.mjs";
 import { register } from "./register8004.mjs";
-import { watch } from "./watch.mjs";
+import {
+  decodeNtagMemo, discoverNtagOps, encodeNtagTransfer, loadNtagPayments, normalizeNtag, ntagAvailability, ntagError, ntagOf,
+  ownerOf, refusedRetryBlocker, resolveNtags, saveNtagPayments, verifyNtagOpOnchain,
+} from "./ntags.mjs";
+import { NTAG_MIN, NTAG_MIN_USD, ntagUsdFloor, watch } from "./watch.mjs";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (n) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
@@ -42,19 +53,54 @@ const has = (n) => rest.includes(`--${n}`);
 const corridorFlag = () => getCorridor(flag("corridor") ?? DEFAULT_CORRIDOR); // payment-link corridors only
 const payCorridorFlag = () => getPayCorridor(flag("corridor") ?? DEFAULT_CORRIDOR); // + celo-cngn (pay / quote)
 const agentAddress = () => loadAccount({ required: false })?.address ?? AGENT_ADDRESS;
-
-/** A request (owner link) or a "Get paid" registration record, for `retry`. Same fields: id, deposit, error, hashes ... */
-const target = (isReg, id) => (isReg ? loadRegState()[String(id).toLowerCase()] : loadRequests().find((x) => x.id === id));
-function updateTarget(isReg, id, fn) {
-  if (isReg) {
-    const s = loadRegState();
-    fn(s[String(id).toLowerCase()]);
-    saveRegState(s);
-  } else {
-    const list = loadRequests();
-    fn(list.find((x) => x.id === id));
-    saveRequests(list);
+/** Positional arguments (everything that is not a --flag or a flag's value). */
+const positional = () => {
+  const out = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i].startsWith("--")) { if (!["--execute", "--yes"].includes(rest[i])) i++; continue; }
+    out.push(rest[i]);
   }
+  return out;
+};
+const readClient = () => createPublicClient({ chain: CHAIN, transport: http(process.env.CELO_RPC_URL || undefined, { timeout: 30_000, retryCount: 2 }) });
+const nowSec = () => Math.floor(Date.now() / 1000);
+const iso = (sec) => new Date(sec * 1000).toISOString();
+const tagLink = (tag) => `${SITE_URL}/tag.html#${tag}`;
+
+/** A tag from user input ("@Ada" -> "ada"), or throws with the rule it breaks. */
+function tagArg(input, usage) {
+  if (!input) throw new Error(`Usage: ${usage}`);
+  const tag = normalizeNtag(input);
+  const err = ntagError(tag);
+  if (err) throw new Error(`@${tag}: ${err}.`);
+  return tag;
+}
+
+/** Current nTag state (Blockscout, all pages) and the entry + claim op for `tag`, or a clear error when nobody holds it. */
+async function resolveOwner(tag) {
+  const ops = await discoverNtagOps({ agent: agentAddress() });
+  const entry = ownerOf(resolveNtags(ops, nowSec()), tag);
+  if (!entry) throw new Error(`@${tag} has no owner right now. Nothing was sent.`);
+  const op = ops.find((o) => o.hash === entry.hash);
+  if (!op) throw new Error(`The claim for @${tag} was not found. Nothing was sent.`);
+  return { entry, op };
+}
+
+/**
+ * The record `retry` works on: a request (owner link), a "Get paid" registration or an nTag payment. Same fields: id,
+ * deposit, error, hashes ...
+ */
+const KINDS = {
+  request: { load: () => loadRequests(), get: (l, id) => l.find((x) => x.id === id), save: saveRequests },
+  registration: { load: loadRegState, get: (s, id) => s[String(id).toLowerCase()], save: saveRegState },
+  ntag: { load: loadNtagPayments, get: (s, id) => s[String(id).toLowerCase()], save: saveNtagPayments },
+};
+const target = (kind, id) => KINDS[kind].get(KINDS[kind].load(), id);
+function updateTarget(kind, id, fn) {
+  const k = KINDS[kind];
+  const s = k.load();
+  fn(k.get(s, id));
+  k.save(s);
 }
 
 async function main() {
@@ -104,9 +150,27 @@ async function main() {
       console.log(JSON.stringify(pv, null, 2));
       break;
     }
-    case "pay":
+    case "pay": {
+      const [p0, p1] = positional();
+      const to = flag("ntag") != null ? `@${normalizeNtag(flag("ntag"))}` : flag("to") ?? p0;
+      if (String(to ?? "").trim().startsWith("@")) {
+        // Owner payout to an nTag: the agent's own funds go to the tag owner's wallet. Same recipient rules and caps
+        // (incl. per-wallet) as "Get paid" payouts; dry run unless --execute. (PowerShell: quote '@ada' or use --ntag ada.)
+        const usage = "pay @tag <amount> | pay --ntag TAG --amount N [--corridor usdt-cngn|cngn-usdt] [--execute] [--yes]";
+        const tag = tagArg(to, usage);
+        const amount = flag("amount") ?? (flag("to") != null || flag("ntag") != null ? p0 : p1);
+        if (!amount) throw new Error(`Usage: ${usage}`);
+        const c = corridorFlag(); // celo-cngn is for contacts only
+        const agent = agentAddress();
+        const { entry, op } = await resolveOwner(tag);
+        const { from } = await verifyNtagOpOnchain(readClient(), op, agent);
+        console.log(`@${tag} belongs to ${from}${entry.name ? ` (${entry.name})` : ""}; claim ${op.hash} checks out onchain.`);
+        await pay({ to: `@${tag}`, amount, corridor: c.id, recipientAddress: from, payer: agent, execute: has("execute"), yes: has("yes"), ntag: tag });
+        break;
+      }
       await pay({ to: flag("to"), amount: flag("amount"), corridor: payCorridorFlag().id, execute: has("execute"), yes: has("yes") });
       break;
+    }
     case "ask": {
       const text = rest.filter((a) => !a.startsWith("--")).join(" ");
       if (/\bcelo\b/i.test(text)) {
@@ -178,48 +242,73 @@ async function main() {
       break;
     }
     case "retry": {
-      // Re-run the payout of a request (or "Get paid" registration) whose deposit is recorded but whose payout failed
-      // before any swap/payout tx.
-      const isReg = flag("registration") != null;
-      const id = flag("registration") ?? flag("request");
-      if (!id) throw new Error("Usage: retry --request ID | --registration HASH [--execute] [--yes]");
-      const what = isReg ? "registration" : "request";
-      const r = target(isReg, id);
-      const blocker = retryBlocker(r);
+      // Re-run the payout of a request ("Get paid" registration, nTag payment) whose deposit is recorded but whose payout
+      // failed before any swap/payout tx.
+      // --force-refused (nTag payments only): pay a deposit autopilot REFUSED (e.g. over a cap at the time), by hand.
+      // Same flow: dry run unless --execute, the claim is re-checked onchain, and every cap applies again.
+      const kind = flag("ntag") != null ? "ntag" : flag("registration") != null ? "registration" : "request";
+      const id = flag("ntag") ?? flag("registration") ?? flag("request");
+      if (!id) throw new Error("Usage: retry --request ID | --registration HASH | --ntag TX:LOGINDEX [--force-refused] [--execute] [--yes]");
+      const what = kind === "ntag" ? "nTag payment" : kind;
+      const isReg = kind !== "request";
+      const force = has("force-refused");
+      if (force && kind !== "ntag") throw new Error("--force-refused is only for nTag payments (retry --ntag TX:LOGINDEX --force-refused).");
+      const r = target(kind, id);
+      if (!r) throw new Error(`No ${what} with that id.`);
+      const refused = kind === "ntag" && r.status === "refused";
+      if (refused && !force) {
+        throw new Error(
+          `${what} ${r.id} was refused by autopilot (${r.reason}) and is not paid automatically. To pay it anyway, run ` +
+          `"node src/agent.mjs retry --ntag ${r.id} --force-refused" (dry run; add --execute to pay). All caps still apply.`,
+        );
+      }
+      if (force && !refused) throw new Error(`${what} ${r.id} was not refused by autopilot; retry it without --force-refused.`);
+      const blocker = force ? refusedRetryBlocker(r) : retryBlocker(r);
       if (blocker) throw new Error(blocker);
+      if (force) {
+        // The tag's claim must still check out onchain and still belong to the wallet recorded at refusal time.
+        const agent = agentAddress();
+        const op = (await discoverNtagOps({ agent })).find((o) => o.hash.toLowerCase() === String(r.claim).toLowerCase());
+        if (!op) throw new Error(`The claim ${r.claim} for @${r.tag} was not found. Nothing was sent.`);
+        const { from } = await verifyNtagOpOnchain(readClient(), op, agent);
+        if (from.toLowerCase() !== String(r.from).toLowerCase()) throw new Error(`The claim for @${r.tag} now points at ${from}, not ${r.from}. Nothing was sent.`);
+      }
       const execute = has("execute");
       const sym = getCorridor(r.dir).sellToken.symbol;
       console.log(`Retry ${what} ${r.id}: ${r.amount} ${sym} deposited by ${r.deposit.payer} (tx ${r.deposit.tx}) -> pay ${r.name}${isReg ? ` (${r.from})` : ""} via ${r.dir}.`);
-      console.log(`Last error: ${r.error}`);
-      const args = isReg
-        ? { to: r.name, amount: r.amount, corridor: r.dir, recipientAddress: r.from, payer: r.deposit.payer, registrationId: r.hash }
-        : { to: r.name, amount: r.amount, corridor: r.dir, requestId: r.id };
+      console.log(force ? `Refused by autopilot: ${r.reason}. Paying it anyway because of --force-refused; every cap still applies.` : `Last error: ${r.error}`);
+      const args = kind === "ntag"
+        ? { to: r.name, amount: r.amount, corridor: r.dir, recipientAddress: r.from, payer: r.deposit.payer, ntag: r.tag }
+        : kind === "registration"
+          ? { to: r.name, amount: r.amount, corridor: r.dir, recipientAddress: r.from, payer: r.deposit.payer, registrationId: r.hash }
+          : { to: r.name, amount: r.amount, corridor: r.dir, requestId: r.id };
       if (!execute) { await pay({ ...args, execute: false }); break; }
 
       const { amountStr, pv, c } = await preflight({ ...args, agent: loadAccount().address });
       console.log(`Preview: ${amountStr} ${c.sellToken.symbol} -> ~${formatUnits(BigInt(pv.buyAmount), 6)} ${c.buyToken.symbol} for ${r.name}.`);
       if (!has("yes") && !(await confirm(`About to pay ${what} ${r.id} for real on Celo MAINNET.`))) { console.log("Cancelled. Nothing was sent."); break; }
       // Mark the retry BEFORE sending (like watch records the deposit first): a crash mid-flow can never lead to a second retry.
-      const again = retryBlocker(target(isReg, id));
+      const again = (force ? refusedRetryBlocker : retryBlocker)(target(kind, id));
       if (again) throw new Error(again);
-      updateTarget(isReg, id, (m) => { m.retrying = new Date().toISOString(); });
+      updateTarget(kind, id, (m) => { m.retrying = new Date().toISOString(); });
       let res;
       try {
         res = await pay({ ...args, execute: true, yes: true });
       } catch (e) {
-        updateTarget(isReg, id, (f) => {
+        updateTarget(kind, id, (f) => {
           f.error = e.message;
           if (e.hashes) f.hashes = e.hashes;
           delete f.retrying;
         });
         throw new Error(`Retry of ${id} failed: ${e.message}. The error is saved on the ${what}.`);
       }
-      updateTarget(isReg, id, (done) => {
+      updateTarget(kind, id, (done) => {
         Object.assign(done, { paidAt: new Date().toISOString(), hashes: res.hashes, receiptUrl: res.receiptUrl, receiptNo: res.receiptNo, paid: res.paid });
+        if (force) { done.forcedAfterRefusal = done.reason; delete done.status; }
         delete done.error;
         delete done.retrying;
       });
-      console.log(`${isReg ? "Registration" : "Request"} ${id} is paid.`);
+      console.log(`${what[0].toUpperCase()}${what.slice(1)} ${id} is paid.`);
       break;
     }
     case "registrations": {
@@ -240,10 +329,106 @@ async function main() {
         console.log(`${g.hash}  ${status.padEnd(8)}  ${req.a ?? "?"} ${sym}  ${req.d ?? "?"}  ${String(req.n ?? "?").slice(0, 40)}  to ${g.from}  expires ${exp}`);
         if (req.m) console.log(`    note: ${String(req.m).slice(0, 80)}`);
         if (rec?.deposit) console.log(`    deposit: ${rec.deposit.tx} from ${rec.deposit.payer}`);
+        for (const x of Object.values(rec?.refused ?? {})) console.log(`    refused deposit: ${x.tx} from ${x.payer} (${x.reason}); not paid`);
         if (rec?.receiptNo) console.log(`    receipt ${rec.receiptNo}: ${receiptNoLink(rec.receiptNo)}`);
         if (rec?.error) console.log(`    error: ${rec.error} (not retried automatically${retryBlocker(rec) ? "" : `; retry with: node src/agent.mjs retry --registration ${g.hash}`})`);
         console.log(`    link: ${registrationLink(g.hash)}`);
       }
+      break;
+    }
+    case "ntag": {
+      // Read-only lookup (Blockscout + RPC); needs no key.
+      const q = positional()[0];
+      if (!q) throw new Error("Usage: ntag <@tag | 0x address>");
+      const ops = await discoverNtagOps({ agent: agentAddress() });
+      const now = nowSec();
+      const state = resolveNtags(ops, now);
+      let tag;
+      if (isAddress(q)) {
+        tag = ntagOf(state, q);
+        if (!tag) { console.log(`${q} holds no nTag right now.`); break; }
+      } else {
+        tag = normalizeNtag(q);
+      }
+      const status = ntagAvailability(state, tag, undefined, now);
+      const words = {
+        taken: "held", free: "free to claim", reserved: "reserved (nobody can claim it)", locked: "locked after a release", invalid: "not a valid tag",
+      };
+      console.log(`@${tag}  ${words[status] ?? status}`);
+      if (status === "invalid") console.log(`  rule: ${ntagError(tag)}`);
+      const lock = state.locks.get(tag);
+      if (status === "locked") console.log(`  only ${lock.owner} can claim it until ${iso(lock.until)}`);
+      const entry = ownerOf(state, tag);
+      if (!entry) break;
+      console.log(`  owner: ${entry.owner}${entry.name ? `  name: ${entry.name}` : ""}`);
+      console.log(`  since: ${iso(entry.since)}`);
+      console.log(`  claim: https://celoscan.io/tx/${entry.hash}`);
+      try {
+        await verifyNtagOpOnchain(readClient(), ops.find((o) => o.hash === entry.hash), agentAddress());
+        console.log("  claim checks out onchain: yes");
+      } catch (e) {
+        console.log(`  claim checks out onchain: ${e.permanent ? `no (${e.message})` : `could not check right now (${e.shortMessage ?? e.message})`}`);
+      }
+      const mine = Object.values(loadNtagPayments()).filter((p) => p.tag === tag);
+      if (mine.length) console.log(`  payments seen by this agent: ${mine.length} (${mine.filter((p) => p.paidAt).length} paid, ${mine.filter((p) => p.status === "refused").length} refused)`);
+      console.log(`  pay link: ${tagLink(tag)}`);
+      break;
+    }
+    case "ntags": {
+      // Every tag held right now (Blockscout, all pages, same resolver as the site).
+      const ops = await discoverNtagOps({ agent: agentAddress() });
+      const { tags } = resolveNtags(ops, nowSec());
+      if (!tags.size) { console.log("No nTags yet. Claim one at site/account.html."); break; }
+      const list = [...tags].sort((a, b) => a[1].since - b[1].since);
+      for (const [tag, e] of list) {
+        console.log(`@${tag.padEnd(20)}  ${e.owner}  since ${iso(e.since).slice(0, 10)}${e.name ? `  ${e.name}` : ""}`);
+      }
+      console.log(`${list.length} nTag(s).`);
+      break;
+    }
+    case "ntag-data": {
+      // What a payer sends from THEIR OWN wallet to pay a tag: an ERC-20 transfer to the agent with the tag memo appended.
+      // Prints calldata only; never loads a key and never sends anything.
+      const usage = "ntag-data @tag <amount> [--token usdt|cngn]";
+      const [p0, p1] = positional();
+      const tag = tagArg(p0, usage);
+      const amountIn = flag("amount") ?? p1;
+      if (!amountIn) throw new Error(`Usage: ${usage}`);
+      const tok = String(flag("token") ?? "usdt").trim().toLowerCase();
+      if (tok !== "usdt" && tok !== "cngn") throw new Error("--token must be usdt or cngn.");
+      const token = tok === "cngn" ? TOKENS.CNGN : TOKENS.USDT;
+      const corridor = tok === "cngn" ? "cngn-usdt" : "usdt-cngn";
+      const amount = parseAmount(amountIn);
+      const units = parseUnits(amount, 6);
+      if (units < parseUnits(NTAG_MIN[corridor], 6)) {
+        throw new Error(tok === "usdt"
+          ? `The smallest nTag payment is ${NTAG_MIN[corridor]} USDT; smaller deposits are not paid.`
+          : `The smallest nTag payment is about ${NTAG_MIN_USD} USD of cNGN (and never under ${NTAG_MIN[corridor]} cNGN); smaller deposits are not paid.`);
+      }
+      if (tok === "usdt" && units > parseUnits(MAX_USD, 6)) throw new Error(`The largest nTag payment is ${MAX_USD} USDT (per-payout cap); larger deposits are not paid automatically.`);
+      const { entry } = await resolveOwner(tag);
+      await ntagUsdFloor(corridor, units); // cNGN: refuse amounts worth under the minimum at today's price
+      if (tok === "cngn") {
+        // Stay 3% under the per-payout cap: autopilot values cNGN with a fresh quote when it pays, and a deposit that
+        // lands over the cap after a price move is refused (it stays with the agent for review).
+        const pv = await preview(TOKENS.CNGN.address, TOKENS.USDT.address, units.toString());
+        if (pv.status !== "preview") throw new Error(`No indicative price right now (${pv.status}), so the ${MAX_USD} USD cap can't be checked. Try again shortly.`);
+        const max = (parseUnits(MAX_USD, 6) * 97n) / 100n;
+        if (BigInt(pv.buyAmount) > max) {
+          throw new Error(`${amount} cNGN is worth about ${formatUnits(BigInt(pv.buyAmount), 6)} USD. In cNGN send up to about ${formatUnits(max, 6)} USD in naira, so it stays under the agent's ${MAX_USD} USD limit after price moves.`);
+        }
+      }
+      const agent = agentAddress();
+      const data = encodeNtagTransfer(agent, units, tag);
+      if (decodeNtagMemo(data) !== tag) throw new Error("Internal check failed: the memo does not decode. Nothing to send.");
+      console.log(`Pay @${tag} (${entry.owner}${entry.name ? `, ${entry.name}` : ""}): ${amount} ${token.symbol}, ${corridor === "usdt-cngn" ? "they get naira (cNGN)" : "they get dollars (USDT)"}.`);
+      console.log(`Send this from your own wallet on Celo mainnet (chain id 42220):`);
+      console.log(`  to:    ${token.address}   (the ${token.symbol} token contract)`);
+      console.log(`  value: 0`);
+      console.log(`  data:  ${data}`);
+      console.log(`The data is a normal transfer of ${amount} ${token.symbol} to the agent ${agent}, with "@${tag}" appended.`);
+      console.log(`The agent pays @${tag} when autopilot runs. Limits: ${MAX_USD} USD per payment, ${MAX_WALLET_DAILY_USD} USD per person per day, ${MAX_DAILY_USD} USD per day overall.`);
+      console.log("Nothing was sent. This command never asks for a key.");
       break;
     }
     case "watch":
@@ -260,7 +445,9 @@ async function main() {
       break;
     }
     default:
-      console.log("Commands: keygen | status | quote | pay | ask | request | requests | registrations | watch | retry | register | verify  (see README)");
+      console.log("Commands: keygen | status | quote | pay | ask | request | requests | registrations | ntag | ntags | ntag-data | watch | retry | register | verify  (see README)");
+      console.log("  nTags: ntag <@tag|address> · ntags · pay @tag <amount> [--corridor ID] [--execute] · ntag-data @tag <amount> [--token usdt|cngn] · retry --ntag TX:LOGINDEX [--force-refused]");
+      console.log("  In PowerShell quote the tag ('@ada') or leave out the @ (ntag ada, pay --ntag ada --amount 5).");
       process.exitCode = cmd ? 1 : 0;
   }
 }

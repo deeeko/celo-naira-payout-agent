@@ -1,4 +1,4 @@
-import { CAP, HAS_API, $, $$, el, icon, badge, naira, usd, getJson, loadRate, initChrome } from "../assets/core.js";
+import { CAP, HAS_API, $, $$, el, icon, badge, naira, usd, getJson, loadRate, initChrome, parseMoneyInput, ageText, normalizeNtag, ntagError } from "../assets/core.js";
 
 initChrome();
 
@@ -83,16 +83,20 @@ const usd4 = (n) => "$" + n.toFixed(4);
 /** USD₮ received per 1 NGN, or null when rate.json doesn't carry it yet. */
 const reverseRate = () => quote?.reverseRate ?? null;
 
-const rawAmount = () => amountIn.value.trim().replace(/[$₦,\s]/g, "");
-/** True when the amount has more than 2 decimal places (the CLI amount and the estimate would differ). */
-const tooPrecise = () => /\.\d{3,}$/.test(rawAmount());
+/** The amount field read exactly (core.js parseMoneyInput: "1,5" is 1.50, "1,250" is 1250): { cents } or { error }. */
+const parsedAmount = () => parseMoneyInput(amountIn.value);
 
 /** Parse the amount field. Returns a positive number with at most 2 decimals, or null. */
 function readAmount() {
-  const raw = rawAmount();
-  if (!/^\d*\.?\d+$|^\d+\.$/.test(raw) || tooPrecise()) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : null;
+  const p = parsedAmount();
+  return p.error || !(p.cents > 0) ? null : p.cents / 100;
+}
+/** Why the typed amount can't be used, for the hint (null when it's fine or empty). */
+function amountProblem(v) {
+  if (!amountIn.value.trim()) return null;
+  const p = parsedAmount();
+  if (p.error) return p.error.startsWith("Enter a number") ? v.badHint : p.error;
+  return p.cents > 0 ? null : "Enter an amount above zero.";
 }
 
 /** Amount as it would be typed on the command line: up to 2 decimals, no trailing zeros. */
@@ -154,19 +158,18 @@ function renderAmount() {
   const over = usdv !== null && usdv > CAP;
   const under = isCelo() && n !== null && (usdv !== null ? usdv < MIN_SWAP_USD : n < minCelo());
   hint.classList.toggle("err", n === null || over || under);
-  if (n === null && tooPrecise()) setText(hint, "Use at most 2 decimal places.");
-  else if (n === null) setText(hint, amountIn.value.trim() ? v.badHint : v.emptyHint);
+  if (n === null) setText(hint, amountProblem(v) ?? v.emptyHint);
   else if (isCelo() && !celoRate() && !(quote || rateFailed)) setText(hint, `Checking the $${CAP} limit once the rate loads.`);
   else if (isCelo() && !celoRate() && under) setText(hint, `CELO rate not published yet. Textile needs about $1 per swap, so send at least about ${fmtCelo(minCelo())}.`);
   else if (isCelo() && !celoRate()) setText(hint, `CELO rate not published yet. The agent checks the $${CAP} limit on its own quote before paying.`);
   else if (under) setText(hint, `Worth about ${usd(usdv)}. Textile needs about $1 per swap, so send at least about ${fmtCelo(minCelo())}.`);
-  else if (over && isCelo()) setText(hint, `Worth about ${usd(usdv)}, over the $${CAP} limit. The agent would refuse this payout.`);
+  else if (over && isCelo()) setText(hint, `Worth about ${usd(usdv)}, over the $${CAP} limit. The agent would refuse this payment.`);
   else if (isCelo()) setText(hint, `Worth about ${usd(usdv)}. The agent pays from about ${fmtCelo(minCelo())} up to $${CAP} (about ${fmtCelo(Math.floor(CAP / celoRate()))}).`);
-  else if (over && isReverse()) setText(hint, `Worth about ${usd(usdv)}, over the $${CAP} limit. The agent would refuse this payout.`);
-  else if (over) setText(hint, `Over the $${CAP} limit. The agent would refuse this payout.`);
-  else if (!isReverse()) setText(hint, `The agent pays up to $${CAP} per payout.`);
-  else if (usdv !== null) setText(hint, `Worth about ${usd(usdv)}. The agent pays up to $${CAP} (about ${naira(CAP / reverseRate())}) per payout.`);
-  else if (quote || rateFailed) setText(hint, `The agent pays up to $${CAP} per payout, checked against its firm quote before paying.`);
+  else if (over && isReverse()) setText(hint, `Worth about ${usd(usdv)}, over the $${CAP} limit. The agent would refuse this payment.`);
+  else if (over) setText(hint, `Over the $${CAP} limit. The agent would refuse this payment.`);
+  else if (!isReverse()) setText(hint, `$1 to $${CAP}, up to 2 decimals.`);
+  else if (usdv !== null) setText(hint, `Worth about ${usd(usdv)}. The agent pays up to $${CAP} (about ${naira(CAP / reverseRate())}) per payment.`);
+  else if (quote || rateFailed) setText(hint, `The agent pays up to $${CAP} per payment, checked against its firm quote before paying.`);
   else setText(hint, `Checking the $${CAP} limit once the rate loads.`);
   amountIn.setAttribute("aria-invalid", String(n === null || over || under));
 
@@ -223,7 +226,7 @@ function renderCommand() {
 
   const ready = nameOk && n !== null;
   if (!ready) {
-    const msg = !nameOk ? "Fix the recipient name to build the command." : tooPrecise() ? "Fix the amount to build the command." : "Enter an amount to build the command.";
+    const msg = !nameOk ? "Fix the recipient name to build the command." : amountIn.value.trim() ? "Fix the amount to build the command." : "Enter an amount to build the command.";
     for (const p of [cmdPre, askPre, reqPre]) setText(p, msg);
     for (const b of [cmdCopy, askCopy, reqCopy]) { b.disabled = true; b.removeAttribute("data-copy"); }
     showLinkNote();
@@ -263,16 +266,18 @@ function renderRate() {
   if (isCelo()) setText($("#kv-rate"), cr ? `1 CELO ≈ ${usd4(cr)} ≈ ${naira(cr * quote.rate)}` : "CELO rate not published yet");
   else if (!isReverse()) setText($("#kv-rate"), `1 USD₮ = ${naira(quote.rate)}`);
   else setText($("#kv-rate"), rr ? `1 USD₮ costs ${naira(1 / rr)}` : "Not published yet");
-  if (isCelo()) setText($("#kv-cap"), cr ? `$${CAP} per payout (about ${fmtCelo(Math.floor(CAP / cr))})` : `$${CAP} per payout`);
-  else setText($("#kv-cap"), isReverse() && rr ? `$${CAP} per payout (about ${naira(CAP / rr)})` : `$${CAP} per payout`);
+  if (isCelo()) setText($("#kv-cap"), cr ? `$${CAP} per payment (about ${fmtCelo(Math.floor(CAP / cr))})` : `$${CAP} per payment`);
+  else setText($("#kv-cap"), isReverse() && rr ? `$${CAP} per payment (about ${naira(CAP / rr)})` : `$${CAP} per payment`);
   setText($("#kv-min"), cr ? `About ${fmtCelo(minCelo())} (about ${usd(minCelo() * cr)}), $1 per swap` : "About 20 CELO (about $1.10), $1 per swap");
 
-  const ageText = quote.ageMin < 1 ? "Updated just now" : quote.ageMin < 120 ? `Updated ${quote.ageMin} min ago` : `Updated ${Math.round(quote.ageMin / 60)} h ago`;
+  // a stale feed (an old rate.json on a host without the live API) must not claim the 30-minute refresh
+  const age = ageText(quote.ageMin);
   const fresh = badge("", quote.stale ? "warn" : "ok");
-  fresh.append(el("span", { class: "dot" }), quote.stale ? `Stale · ${ageText.toLowerCase()}` : ageText);
+  fresh.append(el("span", { class: "dot" }), quote.stale ? `Stale · updated ${age}` : `Updated ${age}`);
   $("#kv-source").replaceChildren(
-    el("span", { class: "row", style: "justify-content:flex-end;gap:8px" }, el("span", {}, "Textile FX, refreshed every 30 min"), fresh),
+    el("span", { class: "row", style: "justify-content:flex-end;gap:8px" }, el("span", {}, quote.stale ? "Textile FX, not refreshed recently" : "Textile FX, refreshed every 30 min"), fresh),
   );
+  const nextRefresh = quote.stale ? "on its next refresh" : "on its next refresh (every 30 min)";
   const t = quote.ticker;
   const bid = Number(t?.bid), ask = Number(t?.ask);
   setText($("#kv-market"), bid > 0 && ask > 0 ? `${naira(bid)} / ${naira(ask)}` : "—");
@@ -281,13 +286,13 @@ function renderRate() {
   if (isCelo() && !cr) {
     alerts.push(el("div", { class: "alert warn mt-16" }, icon("alert"),
       el("span", {}, el("b", {}, "CELO rate not published yet. "),
-        "The CELO price is added to the rate feed on its next refresh (every 30 min). For a live price now, run ",
+        `The CELO price is added to the rate feed ${nextRefresh}. For a live price now, run `,
         el("code", { class: "inline" }, "node src/agent.mjs quote --amount 50 --corridor celo-cngn"), ".")));
   }
   if (isReverse() && !rr) {
     alerts.push(el("div", { class: "alert warn mt-16" }, icon("alert"),
       el("span", {}, el("b", {}, "Reverse rate not published yet. "),
-        "The naira-to-dollar price is added to the rate feed on its next refresh (every 30 min). For a live price now, run ",
+        `The naira-to-dollar price is added to the rate feed ${nextRefresh}. For a live price now, run `,
         el("code", { class: "inline" }, "node src/agent.mjs quote --amount 10000 --corridor cngn-usdt"), ".")));
   }
   if (quote.stale) {
@@ -299,7 +304,7 @@ function renderRate() {
 
 function renderRateError() {
   for (const id of ["#kv-rate", "#kv-fees", "#kv-source", "#kv-market", "#kv-leg2"]) setText($(id), "—");
-  setText($("#kv-cap"), `$${CAP} per payout`);
+  setText($("#kv-cap"), `$${CAP} per payment`);
   setText($("#kv-min"), "About 20 CELO (about $1.10), $1 per swap");
   $("#rate-error").replaceChildren(el("div", { class: "alert err mt-16" }, icon("alert"),
     el("span", {}, "Couldn't load the exchange rate. Refresh the page to try again, or check live rates in the ",
@@ -330,6 +335,23 @@ for (const b of corridorBtns) {
   });
 }
 recipientIn.addEventListener("input", renderCommand);
+
+// "Pay someone by @nTag": Enter (or Go) opens that tag's pay page
+const tagIn = $("#tag-q"), tagHint = $("#tag-hint");
+$("#tag-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const tag = normalizeNtag(tagIn.value);
+  const err = tag ? ntagError(tag) : "enter a tag, like @ada";
+  if (err) {
+    tagHint.classList.add("err");
+    setText(tagHint, err[0].toUpperCase() + err.slice(1) + ".");
+    tagIn.setAttribute("aria-invalid", "true");
+    tagIn.focus();
+    return;
+  }
+  location.href = `tag.html#${tag}`;
+});
+tagIn.addEventListener("input", () => { tagHint.classList.remove("err"); setText(tagHint, ""); tagIn.removeAttribute("aria-invalid"); });
 for (const b of modeBtns) {
   b.addEventListener("click", () => { mode = b.dataset.mode; renderCommand(); });
 }

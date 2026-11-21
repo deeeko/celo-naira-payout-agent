@@ -79,6 +79,9 @@
   <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3.5V8h4.5"/><path d="M9 12.5h6M9 16h6"/></symbol>
   <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M15.5 13.5h1.5"/></symbol>
   <symbol id="i-receipt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h12v17l-2.5-1.6-2 1.6-2-1.6-2 1.6-2-1.6L6 20.5z"/><path d="M9 8.5h6M9 12h6M9 15.5h3.5"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.8 20c1-3.6 3.8-5.6 7.2-5.6s6.2 2 7.2 5.6"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="m10 16-4-4 4-4"/><path d="M6 12h10"/></symbol>
+  <symbol id="i-updown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 9 4-4 4 4"/><path d="m16 15-4 4-4-4"/></symbol>
 </svg>
 <div class="sky sky-sm" aria-hidden="true"></div>
 <aside class="sidebar" id="sidebar" aria-label="Site navigation">
@@ -88,25 +91,16 @@
     <button class="icon-btn sm sb-close" type="button" aria-label="Close menu"><svg class="i"><use href="#i-x"/></svg></button>
   </div>
   <nav class="sb-nav" aria-label="Sections">
-    <p class="sb-group">Product</p>
     <a href="index.html" data-label="Overview"><svg class="i"><use href="#i-home"/></svg><span class="sb-label">Overview</span></a>
-    <a href="quote.html" data-label="Quote"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Quote</span></a>
-    <a href="transactions.html" data-label="Transactions"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Transactions</span></a>
-    <a href="get-paid.html" data-label="Get paid"><svg class="i"><use href="#i-wallet"/></svg><span class="sb-label">Get paid</span></a>
-    <a href="pay.html" data-label="Payment links"><svg class="i"><use href="#i-link"/></svg><span class="sb-label">Payment links</span></a>
-    <a href="autopilot.html" data-label="Autopilot"><svg class="i"><use href="#i-bolt"/></svg><span class="sb-label">Autopilot</span></a>
-    <a href="receipt.html" data-label="Receipts"><svg class="i"><use href="#i-receipt"/></svg><span class="sb-label">Receipts</span></a>
-    <p class="sb-group">Trust</p>
-    <a href="agent.html" data-label="Agent"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
-    <a href="verify.html" data-label="Verify"><svg class="i"><use href="#i-shield"/></svg><span class="sb-label">Verify</span></a>
-    <p class="sb-group">Resources</p>
-    <a href="docs.html" data-label="Docs"><svg class="i"><use href="#i-book"/></svg><span class="sb-label">Docs</span></a>
-    <a href="privacy.html" data-label="Privacy"><svg class="i"><use href="#i-lock"/></svg><span class="sb-label">Privacy</span></a>
-    <a href="terms.html" data-label="Terms"><svg class="i"><use href="#i-doc"/></svg><span class="sb-label">Terms</span></a>
-    <a href="https://github.com/deeeko/celo-naira-payout-agent" data-label="GitHub"><svg class="i"><use href="#i-github"/></svg><span class="sb-label">GitHub</span><svg class="i ext"><use href="#i-ext"/></svg></a>
-    <a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e" data-label="Agent on Celoscan"><svg class="i"><use href="#i-scan"/></svg><span class="sb-label">Agent on Celoscan</span><svg class="i ext"><use href="#i-ext"/></svg></a>
+    <a href="quote.html" data-label="Send" data-also="pay.html tag.html"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Send</span></a>
+    <a href="get-paid.html" data-label="Get paid" data-also="account.html"><svg class="i"><use href="#i-wallet"/></svg><span class="sb-label">Get paid</span></a>
+    <a href="transactions.html" data-label="Activity" data-also="receipt.html verify.html"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Activity</span></a>
+    <a href="agent.html" data-label="Agent" data-also="autopilot.html"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
+    <span class="sb-sep" aria-hidden="true"></span>
+    <a href="docs.html" data-label="Docs" data-also="privacy.html terms.html"><svg class="i"><use href="#i-book"/></svg><span class="sb-label">Docs</span></a>
   </nav>
   <div class="sb-foot">
+    <div class="sb-user" id="sb-user"><a class="sb-user-chip signed-out" href="account.html" data-label="Sign in" aria-label="Sign in with your wallet"><span class="np-avatar is-anon" aria-hidden="true"><svg class="i"><use href="#i-user"/></svg></span><span class="sb-user-text sb-label"><b>Sign in</b><span>With your wallet, free</span></span></a></div>
     <div class="sb-status" title="Celo mainnet">
       <span class="live-dot" aria-hidden="true"></span>
       <div><b>Celo mainnet · live</b><span class="sb-label" id="sb-rate" aria-live="polite">Loading rate…</span></div>
@@ -120,10 +114,11 @@
     <a class="nav-brand" href="index.html"><img src="logo.svg" alt="" width="30" height="30"><span>Naira Payout</span></a>
     <div class="nav-links">
       <a href="index.html">Overview</a>
-      <a href="quote.html">Quote</a>
-      <a href="transactions.html">Transactions</a>
+      <a href="quote.html" data-also="pay.html tag.html">Send</a>
+      <a href="get-paid.html" data-also="account.html">Get paid</a>
+      <a href="transactions.html" data-also="receipt.html verify.html">Activity</a>
     </div>
-    <a class="btn btn-secondary btn-sm" href="https://github.com/deeeko/celo-naira-payout-agent">GitHub</a>
+    <div class="nav-user" id="nav-user"><a class="nav-user-btn signed-out" href="account.html" aria-label="Sign in with your wallet"><svg class="i"><use href="#i-user"/></svg><span>Sign in</span></a></div>
     <button class="icon-btn menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar"><svg class="i"><use href="#i-menu"/></svg></button>
   </nav>
 </div>
@@ -132,6 +127,7 @@
     <span class="eyebrow">Docs</span>
     <h1 class="page-title">How it <em>works</em></h1>
     <p class="lead">What the agent does, the rules it enforces in code, and how to run it yourself.</p>
+    <nav class="subnav" aria-label="Docs pages"><a href="docs.html" aria-current="page">Docs</a><a href="privacy.html">Privacy</a><a href="terms.html">Terms</a></nav>
   </header>
 
   <div class="container grid-main">
@@ -140,7 +136,7 @@
       <section class="card" id="overview" aria-labelledby="overview-h">
         <div class="card-h"><h2 id="overview-h">Overview</h2></div>
         <div class="card-b">
-          <p class="soft">Naira Payout is a command-line agent on Celo mainnet. It converts between USD₮ and cNGN (a naira stablecoin) through Textile FX, and pays the result to a recipient you have approved in advance. It works in two directions, called corridors: pay someone in naira, or pay someone in dollars. The owner can also pay someone in naira from the agent's CELO (<code class="inline" translate="no">celo-cngn</code>): Textile has no direct CELO to cNGN pair, so the agent makes two swaps, CELO to USD₮ and then USD₮ to cNGN, and pays two Textile fees.</p>
+          <p class="soft">Naira Payout is a payout agent on Celo mainnet, with this website for people and a command line for its operator. It converts between USD₮ and cNGN (a naira stablecoin) through Textile FX, and pays the result to the recipient: a contact saved by the agent's owner, the wallet that made a “Get paid” link, or the wallet behind an @nTag. It works in two directions, called corridors: pay someone in naira, or pay someone in dollars. The owner can also pay someone in naira from the agent's CELO (<code class="inline" translate="no">celo-cngn</code>): Textile has no direct CELO to cNGN pair, so the agent makes two swaps, CELO to USD₮ and then USD₮ to cNGN, and pays two Textile fees.</p>
           <p class="soft">The owner can run a single payout by hand, or create a <a class="link" href="pay.html">payment link</a> for an exact amount. When the payer sends that amount, <a class="link" href="autopilot.html">autopilot</a> matches the deposit, converts it and pays the contact. After every payout the agent prints a <a class="link" href="receipt.html">receipt</a> link that rebuilds the payout from chain data, and the payer can rate it in the agent's onchain reputation registry.</p>
           <p class="soft">Onchain: the agent's ERC-8004 identity (agent #10079), and every transaction it sends during a payout: the approval (and an allowance reset, if one is needed), the swap and the transfer to the recipient. Each one carries the attribution tag <code class="inline" translate="no">celo_7360953d1b53</code>. Off chain, on the owner's computer: the Textile price quotes, the contacts file, the agent's key file, the payment requests file and a local receipts log.</p>
         </div>
@@ -156,7 +152,7 @@
         </div>
         <div class="card-b">
           <p class="small muted">Amounts are always typed in the token the payer sends: USD₮ for <code class="inline" translate="no">usdt-cngn</code>, naira for <code class="inline" translate="no">cngn-usdt</code>, CELO for <code class="inline" translate="no">celo-cngn</code>. Payment links, “Get paid” and autopilot support only the first two. A cNGN recipient can redeem it for naira, for example through cngn.co.</p>
-          <div class="alert mt-16"><svg class="i"><use href="#i-info"/></svg><span>This website never holds keys and never moves the agent's money. Payouts are run by the agent on its owner's computer. The only transaction a page can ask you to send is your own rating of a payout, from your own wallet.</span></div>
+          <div class="alert mt-16"><svg class="i"><use href="#i-info"/></svg><span>This website never holds money or keys. Every payment it helps with is sent from your own wallet, after you approve it there: paying a link or an @nTag, making a “Get paid” link, claiming a tag, or rating a payout. The agent, running on its owner's computer, converts on Textile FX and pays the recipient.</span></div>
         </div>
       </section>
 
@@ -201,12 +197,56 @@
         </div>
       </section>
 
+      <section class="card" id="ntags" aria-labelledby="ntags-h">
+        <div class="card-h"><h2 id="ntags-h">nTags and sign-in</h2><span class="muted small"><code class="inline" translate="no">src/ntags.mjs</code> · <code class="inline" translate="no">assets/session.js</code></span></div>
+        <div class="card-b">
+          <p class="soft">An nTag is a short name, like <b>@ada</b>, tied to one Celo wallet. Anyone can pay a tag from their own wallet, and the agent pays the wallet that holds it. Tags live on Celo, not on a server: the site and the agent both rebuild the list of tags from the transactions sent to the agent.</p>
+          <ol class="steps mt-24">
+            <li><h3>Sign in</h3><p>On <a class="link" href="account.html">Account</a>, connect your wallet and sign a short message. It's free, sends nothing and lasts 7 days. Signing out forgets it and disconnects the wallet.</p></li>
+            <li><h3>Claim</h3><p>Pick a tag and send one transaction to the agent with value 0. Its data is <code class="inline" translate="no">NT1:{"t":"ada"}</code>, with an optional display name <code class="inline" translate="no">"n"</code>. It costs only the network fee.</p></li>
+            <li><h3>Share</h3><p>Your page is <code class="inline" translate="no">/@ada</code> on naira-payout.vercel.app, or <code class="inline" translate="no">tag.html#ada</code> on any copy of the site, with a QR code and a WhatsApp button.</p></li>
+            <li><h3>Get paid</h3><p>The payer sends USD₮ (you get naira) or cNGN (you get dollars) to the agent, with your tag written after the transfer. Autopilot converts it and pays your wallet.</p></li>
+          </ol>
+        </div>
+        <div class="card-b">
+          <h3 class="label">Rules</h3>
+          <ul class="checks mt-16">
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Tag format.</b> 3 to 20 characters: lowercase letters, numbers and <code class="inline" translate="no">_</code>. It starts with a letter, has no <code class="inline" translate="no">__</code> and doesn't end with <code class="inline" translate="no">_</code>. A few names, such as admin, support, celo and naira, are reserved.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>First claim wins.</b> Claims are read in the order Celo confirmed them. A claim for a tag someone already holds is ignored.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>One tag per wallet.</b> Claiming a new tag gives up your old one. A release (<code class="inline" translate="no">NT1:{"t":""}</code>) gives it up without a new one.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>30-day lock.</b> A tag you give up stays reserved for you for 30 days, so nobody can grab it and take your payments. You can claim it back within that time.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Paying a tag.</b> USD₮ from $1 up to the $25 per-payout cap, or cNGN from ₦1,500 up to $25 in value. The same per-wallet and 24-hour caps apply as for every payout, and the payer can't be the tag's owner.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Unknown tags are not paid.</b> A payment to a tag nobody holds is refused and logged, and the owner handles the deposit by hand.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Checked twice.</b> Before paying, the agent re-reads the winning claim transaction from Celo to confirm the sender, the data and that it succeeded.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Public and permanent.</b> Tags, display names and the wallets that hold them are onchain. Anyone can read them and nobody can delete them.</span></li>
+          </ul>
+        </div>
+        <div class="card-b">
+          <h3 class="label">Paying a tag without the website</h3>
+          <p class="soft mt-8">Send an ordinary ERC-20 <code class="inline" translate="no">transfer(agent, amount)</code> on USD₮ or cNGN and add the bytes of <code class="inline" translate="no">NTP:ada</code> after the usual 68 bytes of calldata. Token contracts ignore the extra bytes. <code class="inline" translate="no">node src/agent.mjs ntag-data @ada 10</code> prints the exact <code class="inline" translate="no">to</code> and <code class="inline" translate="no">data</code> to send from your own wallet; it never uses a key.</p>
+          <div class="alert mt-16"><svg class="i"><use href="#i-info"/></svg><span>Sign-in is checked by <code class="inline" translate="no">/api/session</code> only on naira-payout.vercel.app. That function verifies the signature and stores nothing. On GitHub Pages and the local preview there's no server, so the page trusts the signature your wallet returns. A sign-in never moves money: every transaction still needs your approval in your wallet.</span></div>
+        </div>
+      </section>
+
       <section class="card" id="receipts" aria-labelledby="receipts-h">
         <div class="card-h"><h2 id="receipts-h">Receipts and reviews</h2></div>
         <div class="card-b">
           <p class="soft">After every executed payout, from <code class="inline" translate="no">pay</code> or from autopilot, the agent prints and logs a link of the form <code class="inline" translate="no">receipt.html#p=&lt;payout&gt;&amp;s=&lt;swap&gt;</code>, plus <code class="inline" translate="no">&amp;r=&lt;request&gt;</code> when it paid a payment link. The <a class="link" href="receipt.html">receipt page</a> rebuilds everything from Celo in your browser: the token, amount and recipient of the payout, the amounts sold and bought in the swap and the effective rate, the time, and the attribution tag on each transaction. It can be shared on WhatsApp, copied or printed.</p>
           <p class="soft">From a receipt, the payer can rate the payout from 1 to 5 stars. The rating is a <code class="inline" translate="no">giveFeedback</code> transaction to the ERC-8004 Reputation Registry, sent from the payer's own wallet after they approve it there. The registry rejects ratings from the agent's owner or operators. The <a class="link" href="agent.html">Agent page</a> lists every rating with its average.</p>
           <div class="alert mt-16"><svg class="i"><use href="#i-info"/></svg><span>The registry cannot check that a reviewer used the agent. “Verified payer” is our own check that the reviewing address has sent USD₮ or cNGN to the agent. Other ratings are shown as unverified.</span></div>
+        </div>
+      </section>
+
+      <section class="card" id="limits" aria-labelledby="limits-h">
+        <div class="card-h"><h2 id="limits-h">Limits</h2><span class="muted small">Set in <code class="inline" translate="no">src/config.mjs</code></span></div>
+        <div class="card-b">
+          <p class="limits"><svg class="i"><use href="#i-shield"/></svg><span><b>$25 per payment</b> · <b>$25 per person per day</b> · <b>$100 per day overall</b></span></p>
+          <ul class="checks mt-16" style="grid-template-columns:minmax(0,1fr)">
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>$25 per payment</b> (<code class="inline" translate="no">MAX_USD</code>), counted in dollars: the USD₮ sold, or the USD₮ bought when someone is paid in dollars. A “Get paid” link in naira can ask for $1 up to $24.99, so the payout stays under the $25 limit.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>$25 per person per day</b> (<code class="inline" translate="no">MAX_WALLET_DAILY_USD</code>) for “Get paid” links and @nTags: the agent adds up what it paid that wallet in the last 24 hours. A payment that would go over is refused and not paid out.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>$100 per day overall</b> (<code class="inline" translate="no">MAX_DAILY_USD</code>), across everyone, from the agent's own payout log. A payment that would go over it is not refused: autopilot stops before it, and pays it when it runs again with room under the limit.</span></li>
+          </ul>
+          <p class="small muted mt-16">“Per day” always means the last 24 hours, not a calendar day. A payment link shows how much more its recipient can receive today before you pay.</p>
         </div>
       </section>
 
@@ -217,7 +257,7 @@
             <li><svg class="i"><use href="#i-check"/></svg><span><b>Dry run by default.</b> Nothing is sent without <code class="inline" translate="no">--execute</code>. A manual payout then waits for you to type “yes” (or pass <code class="inline" translate="no">--yes</code>).</span></li>
             <li><svg class="i"><use href="#i-check"/></svg><span><b>$25 per payout.</b> Set by <code class="inline" translate="no">MAX_USD</code>. For <code class="inline" translate="no">cngn-usdt</code> it is checked on the preview, on the firm quote and on the dollars actually paid.</span></li>
             <li><svg class="i"><use href="#i-check"/></svg><span><b>$100 in any 24 hours.</b> Set by <code class="inline" translate="no">MAX_DAILY_USD</code>. The agent adds up the USD value of executed payouts in <code class="inline" translate="no">receipts.jsonl</code> over the last 24 hours and refuses a payout that would go over.</span></li>
-            <li><svg class="i"><use href="#i-check"/></svg><span><b>Approved recipients only.</b> Payees must be named in the contacts file. The agent's own address, the owner's <code class="inline" translate="no">own_wallets</code>, the token and registry contracts and the zero address are blocked.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Only the named recipient.</b> Owner payouts and owner links pay only contacts in the contacts file; a “Get paid” link pays only the wallet that registered it; an @nTag pays only the wallet that holds it. The agent's own address, the owner's <code class="inline" translate="no">own_wallets</code>, the token and registry contracts and the zero address are blocked.</span></li>
             <li><svg class="i"><use href="#i-check"/></svg><span><b>Price protection.</b> The firm quote may be at most 3% worse than the preview (<code class="inline" translate="no">MAX_SLIPPAGE_BPS</code>), and may not ask for more than the amount requested. Expired quotes are never sent.</span></li>
             <li><svg class="i"><use href="#i-check"/></svg><span><b>Pays what it received.</b> The payout is the measured change in the agent's balance, capped at what the swap delivered.</span></li>
             <li><svg class="i"><use href="#i-check"/></svg><span><b>Autopilot pays only matched requests.</b> Exact token and amount, after the request was made and before it expired, one payout per request. Unmatched deposits are never paid, and autopilot stops on a payout error.</span></li>
@@ -246,6 +286,11 @@
               <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">requests</code></td><td data-label="What it does"><span>Lists every request with its status (open, received, paid or expired), amount, corridor, name, expiry and link, plus its deposit, receipt or error when there is one.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
               <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">watch <span class="nw">[--execute]</span> <span class="nw">[--interval S]</span></code></td><td data-label="What it does"><span>Autopilot. Checks for deposits every <code class="inline" translate="no">--interval</code> seconds (default 15, at least 5) and pays matched requests. A dry run unless <code class="inline" translate="no">--execute</code> is given.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
               <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">retry <span class="nw">--request ID</span> <span class="nw">[--execute]</span> <span class="nw">[--yes]</span></code></td><td data-label="What it does"><span>Runs again an autopilot payout that failed after its deposit was recorded. Only for a request that is unpaid, has a saved error and sent no swap or payout. A dry run unless <code class="inline" translate="no">--execute</code> is given; <code class="inline" translate="no">--yes</code> skips the typed confirmation.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">retry <span class="nw">--ntag TX:LOGINDEX</span> <span class="nw">[--execute]</span> <span class="nw">[--yes]</span></code></td><td data-label="What it does"><span>The same, for an nTag payment that failed after its deposit was recorded in <code class="inline" translate="no">ntag-payments.json</code>. The id is the deposit transaction and its log index.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">ntag &lt;@tag | address&gt;</code></td><td data-label="What it does"><span>Looks up a tag or a wallet: the owner, display name, since when, the claim transaction and whether the tag is free, taken, locked, reserved or invalid.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">ntags</code></td><td data-label="What it does"><span>Lists every tag held right now, with its owner and name.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">pay @tag &lt;amount&gt; <span class="nw">[--corridor ID]</span> <span class="nw">[--execute]</span> <span class="nw">[--yes]</span></code></td><td data-label="What it does"><span>Pays a tag's owner from the agent's own funds. Looks the tag up now, re-checks the claim on Celo, then runs the normal payout with the same caps. In PowerShell write <code class="inline" translate="no">'@ada'</code> in quotes, or use <code class="inline" translate="no">pay --ntag ada --amount 10</code>.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
+              <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">ntag-data @tag &lt;amount&gt; <span class="nw">[--token usdt|cngn]</span></code></td><td data-label="What it does"><span>Prints the <code class="inline" translate="no">to</code> and <code class="inline" translate="no">data</code> for paying a tag from your own wallet or CLI. Never asks for a key.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
               <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">register <span class="nw">[--repo URL]</span> <span class="nw">[--execute]</span></code></td><td data-label="What it does"><span>Registers the agent's ERC-8004 identity, then writes its id into the registration file. Needs the key file.</span></td><td data-label="Sends transactions"><span class="badge warn">With <code class="inline" translate="no">--execute</code></span></td></tr>
               <tr><td class="lead-cell" data-label="Command"><code class="inline" translate="no">verify &lt;hash&gt;</code></td><td data-label="What it does"><span>Reads a transaction from Celo and shows the attribution tags it carries. Needs the key file.</span></td><td data-label="Sends transactions"><span class="badge neutral">No</span></td></tr>
             </tbody>
@@ -376,7 +421,9 @@ node src/agent.mjs watch"><svg class="i"><use href="#i-copy"/></svg></button>
           <li><a href="#overview">Overview</a></li>
           <li><a href="#flow">How a payout runs</a></li>
           <li><a href="#links">Payment links and autopilot</a></li>
+          <li><a href="#ntags">nTags and sign-in</a></li>
           <li><a href="#receipts">Receipts and reviews</a></li>
+          <li><a href="#limits">Limits</a></li>
           <li><a href="#safeguards">Safeguards</a></li>
           <li><a href="#cli">Command line</a></li>
           <li><a href="#config">Configuration</a></li>
@@ -396,11 +443,11 @@ node src/agent.mjs watch"><svg class="i"><use href="#i-copy"/></svg></button>
     <div class="cols">
       <div>
         <div class="foot-brand"><img src="logo.svg" alt="" width="28" height="28">Naira Payout</div>
-        <p class="small soft" style="max-width:40ch">An agent that converts between USD₮ and cNGN on Textile FX and pays an approved recipient on Celo.</p>
+        <p class="small soft" style="max-width:40ch">An agent that converts between USD₮ and cNGN on Textile FX and pays recipients on Celo.</p>
       </div>
       <div>
         <h4>Product</h4>
-        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="get-paid.html">Get paid</a></li><li><a href="pay.html">Payment links</a></li><li><a href="autopilot.html">Autopilot</a></li><li><a href="receipt.html">Receipts</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+        <ul><li><a href="quote.html">Send money</a></li><li><a href="pay.html">Pay a link</a></li><li><a href="get-paid.html">Get paid</a></li><li><a href="account.html">Your nTag</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="receipt.html">Receipts</a></li><li><a href="verify.html">Verify a transaction</a></li><li><a href="agent.html">Agent</a></li><li><a href="autopilot.html">Autopilot</a></li></ul>
       </div>
       <div>
         <h4>Resources</h4>

@@ -51,6 +51,9 @@
   <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3.5V8h4.5"/><path d="M9 12.5h6M9 16h6"/></symbol>
   <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M15.5 13.5h1.5"/></symbol>
   <symbol id="i-receipt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h12v17l-2.5-1.6-2 1.6-2-1.6-2 1.6-2-1.6L6 20.5z"/><path d="M9 8.5h6M9 12h6M9 15.5h3.5"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.8 20c1-3.6 3.8-5.6 7.2-5.6s6.2 2 7.2 5.6"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="m10 16-4-4 4-4"/><path d="M6 12h10"/></symbol>
+  <symbol id="i-updown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 9 4-4 4 4"/><path d="m16 15-4 4-4-4"/></symbol>
 </svg>
 <div class="sky sky-sm" aria-hidden="true"></div>
 <aside class="sidebar" id="sidebar" aria-label="Site navigation">
@@ -60,25 +63,16 @@
     <button class="icon-btn sm sb-close" type="button" aria-label="Close menu"><svg class="i"><use href="#i-x"/></svg></button>
   </div>
   <nav class="sb-nav" aria-label="Sections">
-    <p class="sb-group">Product</p>
     <a href="index.html" data-label="Overview"><svg class="i"><use href="#i-home"/></svg><span class="sb-label">Overview</span></a>
-    <a href="quote.html" data-label="Quote"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Quote</span></a>
-    <a href="transactions.html" data-label="Transactions"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Transactions</span></a>
-    <a href="get-paid.html" data-label="Get paid"><svg class="i"><use href="#i-wallet"/></svg><span class="sb-label">Get paid</span></a>
-    <a href="pay.html" data-label="Payment links"><svg class="i"><use href="#i-link"/></svg><span class="sb-label">Payment links</span></a>
-    <a href="autopilot.html" data-label="Autopilot"><svg class="i"><use href="#i-bolt"/></svg><span class="sb-label">Autopilot</span></a>
-    <a href="receipt.html" data-label="Receipts"><svg class="i"><use href="#i-receipt"/></svg><span class="sb-label">Receipts</span></a>
-    <p class="sb-group">Trust</p>
-    <a href="agent.html" data-label="Agent"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
-    <a href="verify.html" data-label="Verify"><svg class="i"><use href="#i-shield"/></svg><span class="sb-label">Verify</span></a>
-    <p class="sb-group">Resources</p>
-    <a href="docs.html" data-label="Docs"><svg class="i"><use href="#i-book"/></svg><span class="sb-label">Docs</span></a>
-    <a href="privacy.html" data-label="Privacy"><svg class="i"><use href="#i-lock"/></svg><span class="sb-label">Privacy</span></a>
-    <a href="terms.html" data-label="Terms"><svg class="i"><use href="#i-doc"/></svg><span class="sb-label">Terms</span></a>
-    <a href="https://github.com/deeeko/celo-naira-payout-agent" data-label="GitHub"><svg class="i"><use href="#i-github"/></svg><span class="sb-label">GitHub</span><svg class="i ext"><use href="#i-ext"/></svg></a>
-    <a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e" data-label="Agent on Celoscan"><svg class="i"><use href="#i-scan"/></svg><span class="sb-label">Agent on Celoscan</span><svg class="i ext"><use href="#i-ext"/></svg></a>
+    <a href="quote.html" data-label="Send" data-also="pay.html tag.html"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Send</span></a>
+    <a href="get-paid.html" data-label="Get paid" data-also="account.html"><svg class="i"><use href="#i-wallet"/></svg><span class="sb-label">Get paid</span></a>
+    <a href="transactions.html" data-label="Activity" data-also="receipt.html verify.html"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Activity</span></a>
+    <a href="agent.html" data-label="Agent" data-also="autopilot.html"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
+    <span class="sb-sep" aria-hidden="true"></span>
+    <a href="docs.html" data-label="Docs" data-also="privacy.html terms.html"><svg class="i"><use href="#i-book"/></svg><span class="sb-label">Docs</span></a>
   </nav>
   <div class="sb-foot">
+    <div class="sb-user" id="sb-user"><a class="sb-user-chip signed-out" href="account.html" data-label="Sign in" aria-label="Sign in with your wallet"><span class="np-avatar is-anon" aria-hidden="true"><svg class="i"><use href="#i-user"/></svg></span><span class="sb-user-text sb-label"><b>Sign in</b><span>With your wallet, free</span></span></a></div>
     <div class="sb-status" title="Celo mainnet">
       <span class="live-dot" aria-hidden="true"></span>
       <div><b>Celo mainnet · live</b><span class="sb-label" id="sb-rate" aria-live="polite">Loading rate…</span></div>
@@ -92,10 +86,11 @@
     <a class="nav-brand" href="index.html"><img src="logo.svg" alt="" width="30" height="30"><span>Naira Payout</span></a>
     <div class="nav-links">
       <a href="index.html">Overview</a>
-      <a href="quote.html">Quote</a>
-      <a href="transactions.html">Transactions</a>
+      <a href="quote.html" data-also="pay.html tag.html">Send</a>
+      <a href="get-paid.html" data-also="account.html">Get paid</a>
+      <a href="transactions.html" data-also="receipt.html verify.html">Activity</a>
     </div>
-    <a class="btn btn-secondary btn-sm" href="https://github.com/deeeko/celo-naira-payout-agent">GitHub</a>
+    <div class="nav-user" id="nav-user"><a class="nav-user-btn signed-out" href="account.html" aria-label="Sign in with your wallet"><svg class="i"><use href="#i-user"/></svg><span>Sign in</span></a></div>
     <button class="icon-btn menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar"><svg class="i"><use href="#i-menu"/></svg></button>
   </nav>
 </div>
@@ -103,20 +98,38 @@
   <!-- No #r= in the URL: what payment links are and how to make one -->
   <div id="view-explainer">
     <header class="page-head container">
-      <span class="eyebrow">Payment links</span>
-      <h1 class="page-title">Get paid with a <em>link</em></h1>
-      <p class="lead">A payment link asks someone to send an exact amount of USD₮ or cNGN to the agent. When that amount arrives, autopilot converts it and pays the contact named on the link.</p>
-      <p class="mt-16"><a class="link" href="get-paid.html">Anyone can now create a link that pays their own wallet <svg class="i" aria-hidden="true"><use href="#i-right"/></svg></a></p>
+      <span class="eyebrow">Pay a link</span>
+      <h1 class="page-title">Pay a <em>link</em></h1>
+      <p class="lead">Someone sent you a payment link? Open it, or paste it below. You'll see who gets paid and the exact amount, then pay from your own wallet.</p>
+      <p class="mt-16"><a class="link" href="get-paid.html">Want to be paid instead? Create your own link <svg class="i" aria-hidden="true"><use href="#i-right"/></svg></a></p>
+      <nav class="subnav" aria-label="Send pages"><a href="quote.html">Quote</a><a href="pay.html" aria-current="page">Pay a link</a></nav>
     </header>
 
     <div class="container stack">
+      <section class="card" aria-labelledby="open-h">
+        <div class="card-h"><h2 id="open-h">Open a payment link</h2></div>
+        <form class="card-b stack" id="open-form" novalidate>
+          <div class="field">
+            <label class="label" for="open-link">Paste the link you were sent</label>
+            <div class="row" style="gap:10px;flex-wrap:nowrap">
+              <input class="input" id="open-link" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://naira-payout.vercel.app/pay.html#…" aria-describedby="open-hint" style="flex:1;min-width:0">
+              <button class="btn btn-primary" type="submit">Open<svg class="i" aria-hidden="true"><use href="#i-right"/></svg></button>
+            </div>
+            <p class="hint" id="open-hint" aria-live="polite">It starts with this site's address and contains #tx= or #r=.</p>
+          </div>
+        </form>
+      </section>
+
+      <details class="card operator" id="operator">
+        <summary><div><h2>For the agent's owner</h2><span class="small muted">Make a link to a saved contact from the agent's command line</span></div></summary>
+        <div class="card-b stack">
       <section class="card" aria-labelledby="how-h">
         <div class="card-h"><h2 id="how-h">How it works</h2></div>
         <div class="card-b">
           <ol class="steps">
             <li><h3>Create a request</h3><p>The agent owner runs <code class="inline">request</code> with a contact, an amount and a corridor. The agent adds a few cents so the amount is unique.</p></li>
             <li><h3>Share the link</h3><p>The command prints a pay.html link. Send it to the payer by chat or email. It works for 48 hours unless you set another time.</p></li>
-            <li><h3>Payer sends the exact amount</h3><p>From any Celo wallet: tap "Open in wallet", scan the QR code, or send it by hand to the agent's address.</p></li>
+            <li><h3>Payer sends the exact amount</h3><p>From their own Celo wallet: connect it and pay on the link's page, tap "Open in wallet", scan the QR code, or send it by hand to the agent's address.</p></li>
             <li><h3>Autopilot pays out</h3><p><code class="inline">watch --execute</code> sees the deposit, matches it to the request, converts on Textile FX and pays the contact.</p></li>
           </ol>
         </div>
@@ -126,7 +139,7 @@
         <section class="card" aria-labelledby="build-h">
           <div class="card-h"><h2 id="build-h">Build the commands</h2></div>
           <div class="card-b stack">
-            <div class="alert"><svg class="i"><use href="#i-info"/></svg><span>This page can't create links or move money. Links are made on the agent owner's computer with the commands below.</span></div>
+            <div class="alert"><svg class="i"><use href="#i-info"/></svg><span>For the agent's owner: links to a saved contact are made on the agent's computer with the commands below. Anyone can make a link to their own wallet on <a class="link" href="get-paid.html">Get paid</a>.</span></div>
 
             <div class="field">
               <span class="label" id="corridor-label">Corridor</span>
@@ -150,6 +163,7 @@
                 <span class="token" id="b-token">USD₮</span>
               </div>
               <p class="hint" id="b-amount-hint" aria-live="polite"></p>
+              <p class="limits"><svg class="i"><use href="#i-shield"/></svg><span><a href="docs.html#limits">Limits</a>: <b>$25 per payment</b> · <b>$25 per person per day</b> · <b>$100 per day overall</b></span></p>
             </div>
 
             <div class="grid-2">
@@ -192,7 +206,7 @@
               <ul class="checks" style="grid-template-columns:minmax(0,1fr)">
                 <li><svg class="i"><use href="#i-check"/></svg><span>Pays only a deposit that matches <b>a request the owner created</b>: same token, exact amount, sent after the link was made and before it expired.</span></li>
                 <li><svg class="i"><use href="#i-check"/></svg><span>Pays only contacts in <b>contacts.json</b>. A name on a link can't add a new recipient.</span></li>
-                <li><svg class="i"><use href="#i-check"/></svg><span>At most <b>$25 per payout</b> and <b>$100 in any 24 hours</b>.</span></li>
+                <li><svg class="i"><use href="#i-check"/></svg><span><b>$25 per payment</b> · <b>$25 per person per day</b> · <b>$100 per day overall</b>.</span></li>
                 <li><svg class="i"><use href="#i-check"/></svg><span><b>One payout per request</b>. A second deposit for the same link is not paid.</span></li>
                 <li><svg class="i"><use href="#i-check"/></svg><span>Deposits that match no request are <b>logged, never paid</b>. Autopilot stops on errors.</span></li>
               </ul>
@@ -203,11 +217,13 @@
             <div class="card-h"><h2 id="link-h">What's in a link</h2></div>
             <div class="card-b">
               <p class="small soft">Everything after <code class="inline">#r=</code> is the request itself: contact name, exact amount, corridor, note and expiry time. Nothing is stored on a server. The payment page reads the link, then checks the Celo chain for the deposit and the payout.</p>
-              <p class="small muted mt-16">This website never holds keys and never moves the agent's money.</p>
+              <p class="small muted mt-16">This site never holds money or keys. The payer sends from their own wallet, and the agent converts and pays the recipient.</p>
             </div>
           </section>
         </div>
       </div>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -263,6 +279,8 @@
                   <span class="token" id="l-token"></span>
                 </div>
                 <p class="hint" id="l-amount-hint">Send this exact amount. A different amount can't be matched to this link.</p>
+                <p class="limits"><svg class="i"><use href="#i-shield"/></svg><span><a href="docs.html#limits">Limits</a>: <b>$25 per payment</b> · <b>$25 per person per day</b> · <b>$100 per day overall</b></span></p>
+                <div id="l-room" aria-live="polite"></div>
               </div>
 
               <div class="swap-arrow" aria-hidden="true"><span><svg class="i"><use href="#i-down"/></svg></span></div>
@@ -283,7 +301,8 @@
               </ul>
               <div id="l-notice" aria-live="polite"></div>
 
-              <div class="row mt-24" id="l-actions">
+              <div class="pay-wallet mt-24" id="l-wallet" aria-live="polite"></div>
+              <div class="row mt-16" id="l-actions">
                 <a class="btn btn-primary" id="l-open" href="#"><svg class="i" aria-hidden="true"><use href="#i-ext"/></svg>Open in wallet</a>
                 <button class="btn btn-secondary" type="button" id="l-amount-copy" data-copy-label="Amount copied"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg>Copy amount</button>
               </div>
@@ -345,8 +364,9 @@
             <div class="card-b">
               <ul class="checks" style="grid-template-columns:minmax(0,1fr)">
                 <li><svg class="i"><use href="#i-check"/></svg><span>The address is the agent's: <b class="mono" id="l-agent-short"></b>. It is registered on Celo as ERC-8004 agent <a class="link" href="agent.html">#10079</a>.</span></li>
-                <li><svg class="i"><use href="#i-check"/></svg><span id="l-safe-who">The agent only pays <b>approved contacts</b>, up to <b>$25 per payout</b>.</span></li>
+                <li><svg class="i"><use href="#i-check"/></svg><span id="l-safe-who">The agent pays only <b>the contact named on this link</b>, a saved recipient, up to <b>$25 per payment</b>.</span></li>
                 <li><svg class="i"><use href="#i-check"/></svg><span>Only the <b>first matching deposit</b> before expiry is paid out.</span></li>
+                <li><svg class="i"><use href="#i-check"/></svg><span>This site never holds your money or keys. You pay from your own wallet, after you approve it there.</span></li>
               </ul>
             </div>
           </section>
@@ -383,11 +403,11 @@
     <div class="cols">
       <div>
         <div class="foot-brand"><img src="logo.svg" alt="" width="28" height="28">Naira Payout</div>
-        <p class="small soft" style="max-width:40ch">An agent that converts between USD₮ and cNGN on Textile FX and pays an approved recipient on Celo.</p>
+        <p class="small soft" style="max-width:40ch">An agent that converts between USD₮ and cNGN on Textile FX and pays recipients on Celo.</p>
       </div>
       <div>
         <h4>Product</h4>
-        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="get-paid.html">Get paid</a></li><li><a href="pay.html">Payment links</a></li><li><a href="autopilot.html">Autopilot</a></li><li><a href="receipt.html">Receipts</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+        <ul><li><a href="quote.html">Send money</a></li><li><a href="pay.html">Pay a link</a></li><li><a href="get-paid.html">Get paid</a></li><li><a href="account.html">Your nTag</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="receipt.html">Receipts</a></li><li><a href="verify.html">Verify a transaction</a></li><li><a href="agent.html">Agent</a></li><li><a href="autopilot.html">Autopilot</a></li></ul>
       </div>
       <div>
         <h4>Resources</h4>

@@ -46,6 +46,9 @@
   <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3.5V8h4.5"/><path d="M9 12.5h6M9 16h6"/></symbol>
   <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M15.5 13.5h1.5"/></symbol>
   <symbol id="i-receipt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h12v17l-2.5-1.6-2 1.6-2-1.6-2 1.6-2-1.6L6 20.5z"/><path d="M9 8.5h6M9 12h6M9 15.5h3.5"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.8 20c1-3.6 3.8-5.6 7.2-5.6s6.2 2 7.2 5.6"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="m10 16-4-4 4-4"/><path d="M6 12h10"/></symbol>
+  <symbol id="i-updown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 9 4-4 4 4"/><path d="m16 15-4 4-4-4"/></symbol>
 </svg>
 <div class="sky sky-sm" aria-hidden="true"></div>
 <aside class="sidebar" id="sidebar" aria-label="Site navigation">
@@ -55,25 +58,16 @@
     <button class="icon-btn sm sb-close" type="button" aria-label="Close menu"><svg class="i"><use href="#i-x"/></svg></button>
   </div>
   <nav class="sb-nav" aria-label="Sections">
-    <p class="sb-group">Product</p>
     <a href="index.html" data-label="Overview"><svg class="i"><use href="#i-home"/></svg><span class="sb-label">Overview</span></a>
-    <a href="quote.html" data-label="Quote"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Quote</span></a>
-    <a href="transactions.html" data-label="Transactions"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Transactions</span></a>
-    <a href="get-paid.html" data-label="Get paid"><svg class="i"><use href="#i-wallet"/></svg><span class="sb-label">Get paid</span></a>
-    <a href="pay.html" data-label="Payment links"><svg class="i"><use href="#i-link"/></svg><span class="sb-label">Payment links</span></a>
-    <a href="autopilot.html" data-label="Autopilot"><svg class="i"><use href="#i-bolt"/></svg><span class="sb-label">Autopilot</span></a>
-    <a href="receipt.html" data-label="Receipts"><svg class="i"><use href="#i-receipt"/></svg><span class="sb-label">Receipts</span></a>
-    <p class="sb-group">Trust</p>
-    <a href="agent.html" data-label="Agent"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
-    <a href="verify.html" data-label="Verify"><svg class="i"><use href="#i-shield"/></svg><span class="sb-label">Verify</span></a>
-    <p class="sb-group">Resources</p>
-    <a href="docs.html" data-label="Docs"><svg class="i"><use href="#i-book"/></svg><span class="sb-label">Docs</span></a>
-    <a href="privacy.html" data-label="Privacy"><svg class="i"><use href="#i-lock"/></svg><span class="sb-label">Privacy</span></a>
-    <a href="terms.html" data-label="Terms"><svg class="i"><use href="#i-doc"/></svg><span class="sb-label">Terms</span></a>
-    <a href="https://github.com/deeeko/celo-naira-payout-agent" data-label="GitHub"><svg class="i"><use href="#i-github"/></svg><span class="sb-label">GitHub</span><svg class="i ext"><use href="#i-ext"/></svg></a>
-    <a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e" data-label="Agent on Celoscan"><svg class="i"><use href="#i-scan"/></svg><span class="sb-label">Agent on Celoscan</span><svg class="i ext"><use href="#i-ext"/></svg></a>
+    <a href="quote.html" data-label="Send" data-also="pay.html tag.html"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Send</span></a>
+    <a href="get-paid.html" data-label="Get paid" data-also="account.html"><svg class="i"><use href="#i-wallet"/></svg><span class="sb-label">Get paid</span></a>
+    <a href="transactions.html" data-label="Activity" data-also="receipt.html verify.html"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Activity</span></a>
+    <a href="agent.html" data-label="Agent" data-also="autopilot.html"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
+    <span class="sb-sep" aria-hidden="true"></span>
+    <a href="docs.html" data-label="Docs" data-also="privacy.html terms.html"><svg class="i"><use href="#i-book"/></svg><span class="sb-label">Docs</span></a>
   </nav>
   <div class="sb-foot">
+    <div class="sb-user" id="sb-user"><a class="sb-user-chip signed-out" href="account.html" data-label="Sign in" aria-label="Sign in with your wallet"><span class="np-avatar is-anon" aria-hidden="true"><svg class="i"><use href="#i-user"/></svg></span><span class="sb-user-text sb-label"><b>Sign in</b><span>With your wallet, free</span></span></a></div>
     <div class="sb-status" title="Celo mainnet">
       <span class="live-dot" aria-hidden="true"></span>
       <div><b>Celo mainnet · live</b><span class="sb-label" id="sb-rate" aria-live="polite">Loading rate…</span></div>
@@ -87,10 +81,11 @@
     <a class="nav-brand" href="index.html"><img src="logo.svg" alt="" width="30" height="30"><span>Naira Payout</span></a>
     <div class="nav-links">
       <a href="index.html">Overview</a>
-      <a href="quote.html">Quote</a>
-      <a href="transactions.html">Transactions</a>
+      <a href="quote.html" data-also="pay.html tag.html">Send</a>
+      <a href="get-paid.html" data-also="account.html">Get paid</a>
+      <a href="transactions.html" data-also="receipt.html verify.html">Activity</a>
     </div>
-    <a class="btn btn-secondary btn-sm" href="https://github.com/deeeko/celo-naira-payout-agent">GitHub</a>
+    <div class="nav-user" id="nav-user"><a class="nav-user-btn signed-out" href="account.html" aria-label="Sign in with your wallet"><svg class="i"><use href="#i-user"/></svg><span>Sign in</span></a></div>
     <button class="icon-btn menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar"><svg class="i"><use href="#i-menu"/></svg></button>
   </nav>
 </div>
@@ -99,18 +94,30 @@
     <span class="eyebrow">Privacy</span>
     <h1 class="page-title">We don't <em>track</em> you</h1>
     <p class="lead">No cookies. No analytics. No ads. Here's everything this site and the agent touch, in plain words.</p>
-    <p class="small muted mt-16">Updated 20 November 2026</p>
+    <p class="small muted mt-16">Updated 21 November 2026</p>
+    <nav class="subnav" aria-label="Docs pages"><a href="docs.html">Docs</a><a href="privacy.html" aria-current="page">Privacy</a><a href="terms.html">Terms</a></nav>
   </header>
 
   <section class="container" style="padding-bottom:72px">
     <div class="card"><div class="card-b prose">
       <h2 id="site">This website</h2>
-      <p>Nothing about you gets sent to us. There's no server of ours behind this site and no tracking code. Fonts are hosted right here, so no font company sees you either.</p>
-      <p>To show live numbers, your browser reads public data straight from Celo's network (Forno and the Blockscout explorer). GitHub hosts the pages and, like any host, may log basic visit data under <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement">its own policy</a>.</p>
+      <p>Nothing about you gets sent to us. There's no account database behind this site and no tracking code. Fonts are hosted right here, so no font company sees you either.</p>
+      <p>To show live numbers, your browser reads public data straight from Celo's network (Forno and the Blockscout explorer). GitHub and Vercel host the pages and, like any host, may log basic visit data under their own policies (<a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement">GitHub</a>, <a href="https://vercel.com/legal/privacy-policy">Vercel</a>). On Vercel, a few small server functions pass along public explorer data and the exchange rate, and check sign-ins (below). They keep nothing about you.</p>
+
+      <h2 id="signin">Signing in with your wallet</h2>
+      <p>Signing in means connecting your wallet and signing a short message that says which site you're signing in to, when, and when it ends (7 days later). Signing is free and sends nothing. There's no password, email or phone number.</p>
+      <ul>
+        <li><strong>What's saved:</strong> your wallet address, that message and its signature, in this browser's local storage under <code>np-session</code>. It's needed for the sign-in to work, so it's saved whatever you chose for layout. It ends after 7 days or when you sign out. While your wallet is switched to another account, the sign-in is paused, not ended: it picks up again when you switch back.</li>
+        <li><strong>The check:</strong> on naira-payout.vercel.app, the message and signature are sent once to our <code>/api/session</code> function, which checks the signature matches the address and replies yes or no. It doesn't store or log them, and sets no cookie. On the GitHub Pages copy and the local preview there's no server, so the page accepts the signature your wallet returns without that check.</li>
+        <li><strong>Signing out</strong> deletes the saved sign-in and disconnects your wallet from the site. To remove the site's access completely, also disconnect it in your wallet's "Connected sites" settings.</li>
+      </ul>
+      <p>A sign-in only tells this site which wallet you are. It can't move your money: this site never holds money or keys, and every payment is sent from your own wallet, only after you approve it there.</p>
 
       <h2 id="device">On your device</h2>
       <ul>
         <li><strong>Your privacy choice</strong> is saved so we don't keep asking.</li>
+        <li><strong>Your sign-in</strong>, if you sign in (see above).</li>
+        <li><strong>Your nTag</strong>, if you're signed in: the tag your wallet holds is kept for 5 minutes in this tab's session storage, so each page doesn't look it up again. It's public anyway and is deleted when you close the tab or sign out.</li>
         <li><strong>Your layout</strong> (sidebar open or collapsed) is saved <em>only if you say "Sure"</em>.</li>
       </ul>
       <p>That's it. Change your mind anytime: <button class="linklike" type="button" data-consent-open style="color:var(--mint);text-decoration:underline">Privacy choices</button>.</p>
@@ -119,6 +126,7 @@
       <p>Payments on Celo, including wallet addresses and amounts, are public and permanent for everyone. This site just displays them; nobody can delete them, us included.</p>
       <p>If you leave a <strong>review</strong>, it's posted from your own wallet and stays public forever. <strong>Payment links</strong> include the recipient's name, the amount and any note, so anyone with the link can read them. Keep notes non-personal.</p>
       <p>If you <strong>create a link on Get paid</strong>, your own wallet writes your name, the amount, any note and your wallet address to the Celo blockchain. Anyone can read them, with or without the link, and nobody can delete them, us included.</p>
+      <p>If you <strong>claim an nTag</strong> (like @ada), your own wallet writes the tag, any display name you add and your wallet address to the Celo blockchain. Anyone can look up which wallet holds a tag. Payments to your tag are public too. Releasing a tag stops it pointing to you, but the history stays onchain forever. Use a name you're happy to be public.</p>
 
       <h2 id="agent">What the agent keeps</h2>
       <p>To actually send money, the agent keeps a few records on its owner's computer (never on this site or in the code): saved recipients (name and wallet), payment requests (including who paid), and a log of payouts for the daily safety limit. They're used only to make the payments people asked for, never sold or shared, and deleted within two years after the project ends.</p>
@@ -134,11 +142,11 @@
     <div class="cols">
       <div>
         <div class="foot-brand"><img src="logo.svg" alt="" width="28" height="28">Naira Payout</div>
-        <p class="small soft" style="max-width:40ch">An agent that converts between USD₮ and cNGN on Textile FX and pays an approved recipient on Celo.</p>
+        <p class="small soft" style="max-width:40ch">An agent that converts between USD₮ and cNGN on Textile FX and pays recipients on Celo.</p>
       </div>
       <div>
         <h4>Product</h4>
-        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="get-paid.html">Get paid</a></li><li><a href="pay.html">Payment links</a></li><li><a href="autopilot.html">Autopilot</a></li><li><a href="receipt.html">Receipts</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+        <ul><li><a href="quote.html">Send money</a></li><li><a href="pay.html">Pay a link</a></li><li><a href="get-paid.html">Get paid</a></li><li><a href="account.html">Your nTag</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="receipt.html">Receipts</a></li><li><a href="verify.html">Verify a transaction</a></li><li><a href="agent.html">Agent</a></li><li><a href="autopilot.html">Autopilot</a></li></ul>
       </div>
       <div>
         <h4>Resources</h4>

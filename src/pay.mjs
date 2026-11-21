@@ -151,8 +151,9 @@ export function registrationCaps(usdUnits, wallet) {
 /**
  * Owner payouts: `to` is a contact name in contacts.json. "Get paid" registrations: `recipientAddress` is the
  * registration's sender, `payer` the deposit's sender, `to` only a display name, `registrationId` the registration hash.
+ * nTag payouts: like registrations, with `recipientAddress` the tag owner, `to` "@tag" and `ntag` the tag (logged).
  */
-export async function pay({ to, amount, corridor = "usdt-cngn", execute = false, yes = false, requestId, recipientAddress, payer, registrationId } = {}) {
+export async function pay({ to, amount, corridor = "usdt-cngn", execute = false, yes = false, requestId, recipientAddress, payer, registrationId, ntag } = {}) {
   if (String(corridor).trim().toLowerCase() === "celo-cngn") {
     // Direct owner payouts only: never from a payment request or a "Get paid" registration.
     if (requestId != null || recipientAddress != null) getCorridor("celo-cngn"); // throws the "direct payouts only" message
@@ -210,7 +211,10 @@ export async function pay({ to, amount, corridor = "usdt-cngn", execute = false,
     if (takerPays > sellAmount) throw new Error("Quote asks for more than the amount requested. Aborting.");
     const quotedBuy = BigInt(q.quote.buyAmount);
     const usdUnits = c.usd === "sell" ? takerPays : quotedBuy;
-    if (c.usd === "buy") checkCaps(quotedBuy, capWallet);
+    // Registration / nTag payouts (capWallet set): a per-payout or per-wallet cap that only the FIRM quote breaks (cNGN
+    // near the $25 cap after a price move) is a permanent refusal, like in pre-flight: nothing has been sent yet, so
+    // autopilot records it as refused and carries on. The global daily cap still stops it. Contact payouts: unchanged.
+    if (c.usd === "buy") (capWallet ? registrationCaps : checkCaps)(quotedBuy, capWallet);
     const reactor = q.quote.reactor;
     console.log(`Firm quote: pay ${fmt(takerPays)} ${sell.symbol}, receive ${fmt(quotedBuy)} ${buy.symbol}`);
 
@@ -258,7 +262,7 @@ export async function pay({ to, amount, corridor = "usdt-cngn", execute = false,
     const receiptUrl = receiptLink({ payout: hashes.payout, swap: hashes.swap, requestId });
     const no = receiptNo(hashes.payout);
     log({
-      corridor: c.id, to, recipient, requestId, ...(registrationId ? { registrationId, payer } : {}), receiptNo: no,
+      corridor: c.id, to, recipient, requestId, ...(registrationId ? { registrationId, payer } : {}), ...(ntag ? { ntag, payer } : {}), receiptNo: no,
       sold: { token: sell.symbol, amount: fmt(takerPays) },
       paid: { token: buy.symbol, amount: fmt(received) },
       usd: fmt(usdUnits),

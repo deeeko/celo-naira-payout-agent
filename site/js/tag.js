@@ -1,0 +1,572 @@
+import {
+  AGENT, CAP, TOKENS, $$, el, icon, badge, short, num2, naira, usd, celoscanAddr, celoscanTx, initChrome,
+  toast, readContract, loadRate, loadNtagOps, resolveNtags, ownerOf, ntagAvailability, normalizeNtag, ntagError,
+  encodeNtagTransfer, ntagUrl, receiptNo, walletDisconnected, markWalletConnected, parseMoneyInput, lagosTime, $,
+} from "../assets/core.js";
+import { getSession, explainWalletError, injectedWallet, ensureCelo, CELO_CHAIN } from "../assets/session.js";
+import {
+  ntagCard, stage, alertBox, availabilityMessage, ntagFinder, waitForReceipt, plainError, sameAddr, sleep, dayMonthYear,
+  nameText, LIMITS, LIMITS_TEXT, CNGN_CAP_USD, REFUSED_NOTE, receivableToday, allowanceResetAt, loadNtagStateFresh,
+  loadTagLedger, slowNotice, scrollToNode, focusHeading, noWalletHelp, noCeloAlert, celoBalance,
+} from "../assets/ntag-ui.js";
+
+initChrome();
+// A pay page belongs under "Send". On Vercel it's served at /@ada, which no sidebar entry names, so mark it here.
+for (const a of document.querySelectorAll(".sb-nav a, .nav-links a")) {
+  if (a.getAttribute("href") === "quote.html") a.setAttribute("aria-current", "page");
+  else if (a.getAttribute("aria-current") === "page") a.removeAttribute("aria-current");
+}
+
+// Public nTag page: /@ada on Vercel (rewritten to tag.html?t=ada, but the address bar keeps /@ada), tag.html?t=ada or
+// tag.html#ada. Paying = one ERC-20 transfer from the payer's wallet to the agent with "NTP:<tag>" after the usual
+// calldata. The agent then converts and pays the tag's owner when autopilot runs (site/_spec/NTAGS.md section 1e).
+
+const root = $("#tag-root");
+const title = $("#tag-title"), lead = $("#tag-lead");
+const eth = injectedWallet();
+const USDT_MIN_CENTS = 100, USDT_MAX_CENTS = CAP * 100; // $1.00 to $25.00
+const NGN_MIN = 1500; // cNGN payments must also be worth at least $1 (the agent checks it live)
+const PAYOUT_POLL_MS = 10_000, PAYOUT_WATCH_MS = 2 * 3600_000;
+const PENDING_KEY = (tag) => `np-ntag-pay:${tag}`;
+const isHash = (h) => /^0x[0-9a-fA-F]{64}$/.test(String(h));
+const errText = (e) => (e?.plain ? e.message : explainWalletError(e));
+const txLink = (hash, text = "View on Celoscan") => el("a", { class: "link", href: celoscanTx(hash) }, text, " ", icon("ext"));
+const ngnText = (n) => num2.format(n).replace(/\.00$/, "");
+const watTime = (ms) => (ms ? `${lagosTime(ms)} WAT` : "24 hours");
+const dollars = (v) => usd(Math.floor(v * 100 + 1e-6) / 100).replace(/\.00$/, "");
+
+/** The tag in the address. /@tag wins over ?t= and #, so /@ada?t=x or /@ada#x can never show another tag. */
+function readTag() {
+  const m = location.pathname.match(/^\/@([^/?#]+)$/);
+  if (m) {
+    let t = m[1];
+    try { t = decodeURIComponent(t); } catch { /* malformed escape: shown as not a valid tag */ }
+    return normalizeNtag(t);
+  }
+  const q = new URLSearchParams(location.search).get("t");
+  let h = location.hash.replace(/^#/, "");
+  try { h = decodeURIComponent(h); } catch { /* keep as is */ }
+  return normalizeNtag(q || h);
+}
+function finderCard(heading, value) {
+  return el("section", { class: "card" }, el("div", { class: "card-b stack" },
+    heading ? el("h2", { class: "section-title", style: "font-size:20px" }, heading) : null,
+    ntagFinder({ id: "tag-find", label: "Find an nTag", value, address: () => getSession()?.address })));
+}
+
+// ---------- page ----------
+// Everything a render starts (wallet listeners, the payout tracker, timers) registers a clean-up here, so a new render
+// (another tag via the hash) never leaves the old one running.
+let cleanups = [];
+const onCleanup = (fn) => { cleanups.push(fn); };
+function teardown() { for (const fn of cleanups.splice(0)) { try { fn(); } catch { /* keep tearing down */ } } }
+
+let renderSeq = 0, shownTag;
+async function render() {
+  teardown();
+  const my = ++renderSeq;
+  const tag = readTag();
+  shownTag = tag;
+  if (!tag) {
+    document.title = "Pay by nTag · Naira Payout";
+    title.replaceChildren("Find an ", el("em", {}, "nTag"));
+    lead.textContent = "An nTag is a short name tied to a Celo wallet. Pay the tag and the agent pays that wallet in naira or dollars.";
+    root.replaceChildren(finderCard(null));
+    return;
+  }
+  const err = ntagError(tag);
+  if (err && !/reserved/.test(err)) {
+    title.replaceChildren("Pay by ", el("em", {}, "nTag"));
+    root.replaceChildren(el("div", { class: "stack" },
+      alertBox("warn", "alert", el("p", {}, el("b", {}, `@${tag} isn't a valid nTag. `), `It ${err.replace(/^use /, "should use ").replace(/^must /, "must ").replace(/^can't /, "can't ")}. Check the link with whoever sent it.`)),
+      finderCard("Look someone up", tag)));
+    return;
+  }
+  document.title = `@${tag} · Naira Payout`;
+  title.replaceChildren("Pay ", el("em", {}, "@" + tag));
+  root.replaceChildren(el("p", { class: "small muted", role: "status" }, el("span", { class: "skel", style: "width:14px;height:14px;border-radius:50%;margin-right:8px" }), `Looking up @${tag} on Celo…`));
+  let state;
+  try { state = resolveNtags(await loadNtagOps()); }
+  catch {
+    if (my !== renderSeq) return;
+    const retry = el("button", { class: "btn btn-secondary btn-sm", type: "button" }, icon("refresh"), "Try again");
+    retry.addEventListener("click", render);
+    root.replaceChildren(alertBox("err", "alert", el("p", {}, "Couldn't reach the Celo explorer to look up this tag. Nothing was sent."), el("div", { class: "row mt-8" }, retry)));
+    return;
+  }
+  if (my !== renderSeq) return;
+  const entry = ownerOf(state, tag);
+  if (!entry) { renderUnclaimed(tag, state); return; }
+  renderProfile(tag, entry);
+}
+
+function renderUnclaimed(tag, state) {
+  const me = getSession()?.address;
+  const kind = ntagAvailability(state, tag, me);
+  title.replaceChildren(el("em", {}, "@" + tag), kind === "reserved" ? " is reserved" : kind === "locked" ? " is on hold" : " is free");
+  const card = ntagCard({ tag, kind: "ghost", stamp: kind === "reserved" ? "Reserved" : kind === "locked" ? "On hold" : "Unclaimed" });
+  let copy;
+  if (kind === "reserved") {
+    lead.textContent = "Some tags are kept back so nobody can pretend to be the service, a bank or a wallet.";
+    copy = [el("p", { class: "soft" }, `Nobody can claim @${tag}, so there's no one to pay here. If someone gave you this tag, ask them for their real one.`)];
+  } else if (kind === "locked") {
+    const lock = state.locks.get(tag);
+    lead.textContent = "This tag was released recently.";
+    copy = [el("p", { class: "soft" }, availabilityMessage(tag, kind, { lock }).text, " There's no one to pay at this tag right now.")];
+  } else {
+    lead.textContent = "Nobody has claimed this tag, so there's no one to pay here yet.";
+    copy = [
+      el("p", { class: "soft" }, `If someone sent you this link, check the spelling with them. If it's the name you want, it's yours to take: claiming takes a minute and costs only the network fee.`),
+      el("div", { class: "nt-actions" }, el("a", { class: "btn btn-primary btn-lg", href: `account.html#claim=${tag}` }, `Claim @${tag} yourself`, icon("right"))),
+    ];
+  }
+  root.replaceChildren(el("div", { class: "stack", style: "gap:24px" },
+    el("section", { class: "card" }, el("div", { class: "card-b", style: "padding:clamp(22px,4vw,40px)" },
+      el("div", { class: "nt-signin" },
+        el("div", { class: "stack" }, el("h2", { class: "section-title" }, kind === "free" ? `Nobody has @${tag} yet` : `You can't pay @${tag}`), ...copy),
+        stage(card)))),
+    finderCard("Looking for someone else?")));
+}
+
+function renderProfile(tag, entry) {
+  if (entry.name) lead.replaceChildren(nameText(entry.name), " gets paid in naira or dollars on Celo. You send USD₮ or cNGN; the agent converts it and pays their wallet.");
+  else lead.textContent = "You send USD₮ or cNGN; the agent converts it and pays this tag's wallet in naira or dollars.";
+  const card = ntagCard({ tag, name: entry.name, address: entry.owner, since: entry.since, as: "button", label: `nTag @${tag}. Copy the link to this page` });
+  card.dataset.copy = ntagUrl(tag);
+  card.dataset.copyLabel = "Link copied";
+  const details = el("section", { class: "card", "aria-labelledby": "who-h" },
+    el("div", { class: "card-h" }, el("h2", { id: "who-h" }, "Who you're paying"), badge("Registered onchain", "neutral")),
+    el("div", { class: "card-b" }, el("ul", { class: "kv-list" },
+      el("li", {}, el("span", {}, "nTag"), el("span", { class: "np-tagname", style: "font-size:17px;color:var(--celo)" }, "@" + tag)),
+      entry.name ? el("li", {}, el("span", {}, "Name"), el("span", { class: "nt-namecell" }, nameText(entry.name), el("small", { class: "micro muted" }, "Name set by the owner"))) : null,
+      el("li", {}, el("span", {}, "Wallet"), el("a", { class: "mono link", href: celoscanAddr(entry.owner), title: entry.owner }, short(entry.owner), " ", icon("ext"))),
+      el("li", {}, el("span", {}, "Since"), el("span", {}, dayMonthYear(entry.since))),
+      el("li", {}, el("span", {}, "Claim"), el("a", { class: "link", href: celoscanTx(entry.hash) }, "Transaction ", icon("ext"))))),
+    el("div", { class: "card-f" }, el("span", { class: "small muted" }, "The tag's owner chose this name; nobody checks it. Make sure it's who you expect."),
+      el("button", { class: "btn btn-ghost btn-sm", type: "button", dataset: { copy: ntagUrl(tag), copyLabel: "Link copied" } }, icon("copy"), "Copy link")));
+  root.replaceChildren(el("div", { class: "grid-main" }, payCard(tag, entry), el("div", { class: "nt-profile" }, stage(card), details)));
+}
+
+// ---------- pay ----------
+function payCard(tag, entry) {
+  const P = {
+    corridor: "usdt-cngn", rate: null, rateFailed: false, account: null, chainOk: null, bal: null, celo: null, busy: false,
+    touched: false, allowance: null, celoAnyway: false, alive: true,
+  };
+  onCleanup(() => { P.alive = false; });
+  const isNaira = () => P.corridor === "usdt-cngn"; // they get naira, you send USD₮
+  const sellToken = () => (isNaira() ? TOKENS.USDT : TOKENS.cNGN);
+
+  const seg = el("div", { class: "segmented", role: "group", "aria-label": "What they get", id: "corridor" },
+    el("button", { type: "button", dataset: { corridor: "usdt-cngn" }, "aria-pressed": "true" }, "They get naira"),
+    el("button", { type: "button", dataset: { corridor: "cngn-usdt" }, "aria-pressed": "false" }, "They get dollars"));
+  const segHint = el("p", { class: "hint" });
+  const amountIn = el("input", { id: "pay-amount", type: "text", inputmode: "decimal", autocomplete: "off", spellcheck: "false", size: "4", value: "10", "aria-describedby": "pay-amount-hint pay-today" });
+  const tokenEl = el("span", { class: "token" }, "USD₮");
+  const amountHint = el("p", { class: "hint", id: "pay-amount-hint" });
+  const out = el("output", { for: "pay-amount", "aria-live": "polite" }, el("span", { class: "skel lg" }));
+  const sRate = el("span", {}, "—"), sSend = el("span", {}, "—");
+  const today = el("p", { class: "small soft", id: "pay-today" }, `Checking how much more @${tag} can receive today…`);
+  const limits = el("div", { class: "nt-limits" }, today,
+    el("p", { class: "micro muted" }, LIMITS_TEXT, ". ", REFUSED_NOTE));
+
+  // wallet area: built once and updated in place, so a click is never lost to a rebuild (blur re-renders the form)
+  const fromLink = el("a", { class: "mono link" });
+  const balCell = el("span", { class: "num" });
+  const netCell = el("span", {});
+  const walletInfo = el("ul", { class: "kv-list" },
+    el("li", {}, el("span", {}, "Paying from"), fromLink),
+    el("li", {}, el("span", {}, "Balance"), balCell),
+    el("li", {}, el("span", {}, "Network"), netCell));
+  const problemBox = el("div", {});
+  const noWalletBox = el("div", {});
+  const walletBox = el("div", { class: "stack", style: "gap:12px" });
+  const payBtn = el("button", { class: "btn btn-primary btn-lg", type: "button" }, "Pay");
+  const connectBtn = el("button", { class: "btn btn-primary btn-lg", type: "button" }, icon("wallet"), el("span", {}, "Connect wallet"));
+  payBtn.addEventListener("click", () => submit());
+  connectBtn.addEventListener("click", () => connect());
+  const actions = el("div", { class: "nt-actions" });
+  const msg = el("div", { "aria-live": "polite" });
+  const form = el("div", { class: "stack" },
+    el("div", { class: "field" }, el("span", { class: "label", id: "corridor-l" }, "What does @" + tag + " get?"), seg, segHint),
+    el("div", { class: "field" }, el("label", { class: "label", for: "pay-amount" }, "You send"), el("div", { class: "money" }, amountIn, tokenEl), amountHint),
+    el("div", { class: "swap-arrow", "aria-hidden": "true" }, el("span", {}, icon("down"))),
+    el("div", { class: "receive" }, el("div", { class: "label" }, el("span", {}, "@" + tag + " gets about")), out),
+    el("ul", { class: "kv-list" },
+      el("li", {}, el("span", {}, "You send"), sSend),
+      el("li", {}, el("span", {}, "Rate"), sRate),
+      el("li", {}, el("span", {}, "Paid by"), el("span", {}, "The agent, when autopilot next runs"))),
+    limits, walletBox, actions, msg);
+  const body = el("div", { class: "card-b" }, form);
+  const basis = el("span", { class: "badge neutral", id: "pay-basis" }, "Estimate");
+  const section = el("section", { class: "card", "aria-labelledby": "pay-h" },
+    el("div", { class: "card-h" }, el("h2", { id: "pay-h" }, "Pay ", el("span", { class: "np-tagname", style: "font-size:17px" }, "@" + tag)), basis),
+    body,
+    el("div", { class: "card-f" }, el("span", { class: "small muted" }, "Your wallet asks before anything is sent. The final amount is set by Textile FX when the agent converts.")));
+
+  // ----- amount -----
+  /** { cents, units (bigint, 6 dp), usd } or { error } */
+  function readAmount() {
+    const p = parseMoneyInput(amountIn.value);
+    if (p.error) return { error: p.error };
+    const cents = p.cents;
+    const units = BigInt(cents) * 10_000n;
+    let value;
+    if (isNaira()) {
+      if (cents < USDT_MIN_CENTS || cents > USDT_MAX_CENTS) return { cents, units, error: `Send $1 to $${CAP}.` };
+      value = cents / 100;
+    } else {
+      if (cents < NGN_MIN * 100) return { cents, units, error: `Send at least ₦${ngnText(NGN_MIN)}.` };
+      const rr = P.rate?.reverseRate;
+      if (!rr) return { cents, units, error: P.rateFailed ? `Couldn't load the dollar rate, so the $${CAP} limit can't be checked. Choose naira, or reload in a minute.` : "Loading the dollar rate…" };
+      value = (cents / 100) * rr;
+      if (value > CNGN_CAP_USD) return { cents, units, error: `That's worth about ${dollars(value)}. In cNGN, send up to about ₦${ngnText(Math.floor(CNGN_CAP_USD / rr))} so it stays under the agent's $${CAP} limit after price moves.` };
+      if (value < 1) return { cents, units, error: "That's worth less than $1. Send a little more." };
+    }
+    const alw = P.allowance;
+    if (alw && !alw.error && value > alw.leftUsd + 0.005) {
+      const at = allowanceResetAt(alw, value);
+      if (alw.leftUsd < 1) return { cents, units, usd: value, limit: true, error: `@${tag} has reached today's limit; try again after ${watTime(at)}.` };
+      return { cents, units, usd: value, limit: true, error: `@${tag} can receive about ${dollars(alw.leftUsd)} more today. Send less, or try again after ${watTime(at)}.` };
+    }
+    return { cents, units, usd: value };
+  }
+  const fmtSend = (cents) => (isNaira() ? `${num2.format(cents / 100)} USD₮` : `${num2.format(cents / 100)} cNGN`);
+  const cngnHint = () => {
+    const rr = P.rate?.reverseRate;
+    const most = rr ? `about ₦${ngnText(Math.floor(CNGN_CAP_USD / rr))} (about $${CNGN_CAP_USD})` : `about $${CNGN_CAP_USD} in value`;
+    return `₦${ngnText(NGN_MIN)} up to ${most}. That's a little under the $${CAP} limit, so price moves before the agent pays can't push it over.`;
+  };
+
+  function renderToday() {
+    const a = P.allowance;
+    const lim = `limit $${LIMITS.perPersonDay} per person per day`;
+    if (!a) today.textContent = `Checking how much more @${tag} can receive today…`;
+    else if (a.error) today.textContent = `Couldn't check how much more @${tag} can receive today (${lim}). The agent still checks it before paying.`;
+    else today.replaceChildren(el("b", {}, `@${tag} can receive about ${dollars(a.leftUsd)} more today`), ` · ${lim}`);
+  }
+  function renderForm() {
+    for (const b of $$("button", seg)) b.setAttribute("aria-pressed", String(b.dataset.corridor === P.corridor));
+    segHint.textContent = isNaira() ? `You send USD₮. @${tag} gets cNGN (naira).` : `You send cNGN. @${tag} gets USD₮ (dollars).`;
+    tokenEl.textContent = sellToken().symbol;
+    const a = readAmount();
+    const show = a.error && (P.touched || a.limit || amountIn.value.trim()) && !/^Loading/.test(a.error);
+    amountHint.classList.toggle("err", !!show);
+    amountHint.textContent = show ? a.error : isNaira() ? `$1 to $${CAP}, up to 2 decimals.` : cngnHint();
+    amountIn.setAttribute("aria-invalid", String(!!show));
+    sSend.textContent = a.cents > 0 && !a.error ? fmtSend(a.cents) : "—";
+    const r = P.rate;
+    let get = null, rateText = "—";
+    if (r) {
+      if (isNaira()) { rateText = `1 USD₮ = ${naira(r.rate)}`; if (a.cents > 0) get = naira((a.cents / 100) * r.rate); }
+      else if (r.reverseRate) { rateText = `1 USD₮ = ${naira(1 / r.reverseRate)}`; if (a.cents > 0) get = usd((a.cents / 100) * r.reverseRate); }
+      else rateText = "Not published yet";
+      basis.textContent = r.fromPreview ? "Fees included" : "Before fees";
+    } else if (P.rateFailed) rateText = "Rate unavailable";
+    if (r || P.rateFailed) out.replaceChildren(get ?? "—");
+    out.classList.toggle("over", !!a.error && a.cents > 0 && !/^Loading/.test(a.error));
+    sRate.textContent = rateText;
+    renderToday();
+    renderWallet();
+  }
+
+  // ----- wallet -----
+  async function refreshBalances() {
+    const acct = P.account;
+    if (!acct) return;
+    const token = sellToken().address;
+    try {
+      const [[b], c] = await Promise.all([readContract(token, "0x70a08231", ["address"], [acct], ["uint256"]), celoBalance(acct)]);
+      if (acct !== P.account || !P.alive) return;
+      P.bal = { token, units: b };
+      P.celo = c;
+    } catch { P.bal = null; P.celo = null; }
+    renderWallet();
+  }
+  function walletProblem() {
+    if (!P.account) return null;
+    if (sameAddr(P.account, entry.owner)) return { kind: "err", text: `This is @${tag}'s own wallet. The agent doesn't pay a tag from its owner's wallet, so this payment would be refused. Connect a different wallet.` };
+    if (sameAddr(P.account, AGENT)) return { kind: "err", text: "This is the agent's own wallet. Connect your own wallet." };
+    const a = readAmount();
+    if (!a.error && P.bal && sameAddr(P.bal.token, sellToken().address) && P.bal.units < a.units) {
+      return { kind: "warn", text: `This wallet has ${num2.format(Number(P.bal.units) / 1e6)} ${sellToken().symbol}, less than the ${fmtSend(a.cents)} you're sending.` };
+    }
+    if (P.celo === 0n && !P.celoAnyway) return { kind: "celo" };
+    return null;
+  }
+  const setActions = (node) => { if (actions.childNodes.length !== 1 || actions.firstChild !== node) actions.replaceChildren(node); };
+  let problemKey = "";
+  function renderWallet() {
+    if (P.busy) return;
+    if (!eth) {
+      if (!noWalletBox.firstChild) noWalletBox.append(noWalletHelp({ action: "pay" }));
+      if (walletBox.firstChild !== noWalletBox) walletBox.replaceChildren(noWalletBox);
+      actions.replaceChildren();
+      return;
+    }
+    if (!P.account) {
+      if (walletBox.firstChild) walletBox.replaceChildren();
+      setActions(connectBtn);
+      return;
+    }
+    fromLink.href = celoscanAddr(P.account);
+    fromLink.title = P.account;
+    fromLink.textContent = short(P.account);
+    if (P.bal && sameAddr(P.bal.token, sellToken().address)) balCell.textContent = `${num2.format(Number(P.bal.units) / 1e6)} ${sellToken().symbol}`;
+    else if (!balCell.querySelector(".skel")) balCell.replaceChildren(el("span", { class: "skel" }));
+    if (P.chainOk === false) { if (!netCell.querySelector(".badge")) netCell.replaceChildren(badge("Not Celo: switch when you pay", "warn")); }
+    else if (netCell.textContent !== "Celo mainnet") netCell.textContent = "Celo mainnet";
+    const problem = walletProblem();
+    const key = problem ? problem.kind + ":" + (problem.text ?? "") : "";
+    if (key !== problemKey) {
+      problemKey = key;
+      if (!problem) problemBox.replaceChildren();
+      else if (problem.kind === "celo") problemBox.replaceChildren(noCeloAlert(() => { P.celoAnyway = true; renderWallet(); submit(); }, "Pay anyway"));
+      else problemBox.replaceChildren(alertBox(problem.kind, "alert", el("p", {}, problem.text)));
+    }
+    if (walletBox.childNodes.length !== 2 || walletBox.firstChild !== walletInfo) walletBox.replaceChildren(walletInfo, problemBox);
+    const a = readAmount();
+    payBtn.disabled = Boolean(a.error) || problem?.kind === "err" || problem?.kind === "celo"; // no CELO: confirm with "Pay anyway"
+    const label = a.error ? "Pay" : `Pay ${fmtSend(a.cents)}`;
+    if (payBtn.textContent !== label) payBtn.textContent = label;
+    setActions(payBtn);
+  }
+  async function setAccount(acct) {
+    P.account = acct ?? null;
+    P.bal = null; P.celo = null; P.celoAnyway = false;
+    if (P.account) {
+      try { P.chainOk = String(await eth.request({ method: "eth_chainId" })).toLowerCase() === CELO_CHAIN; } catch { P.chainOk = null; }
+    }
+    if (!P.alive) return;
+    renderWallet();
+    refreshBalances();
+  }
+  async function connect() {
+    connectBtn.disabled = true;
+    connectBtn.lastChild.textContent = "Check your wallet…";
+    msg.replaceChildren();
+    markWalletConnected();
+    try {
+      const accs = await eth.request({ method: "eth_requestAccounts" });
+      if (!accs?.length) throw plainError("The wallet returned no account.");
+      try { await ensureCelo(eth); P.chainOk = true; } catch (e) { msg.replaceChildren(alertBox("warn", "alert", el("p", {}, "Connected, but the wallet is not on Celo. ", errText(e)))); }
+      await setAccount(accs[0]);
+    } catch (e) {
+      msg.replaceChildren(alertBox("err", "alert", el("p", {}, errText(e))));
+    } finally {
+      connectBtn.disabled = false;
+      connectBtn.lastChild.textContent = "Connect wallet";
+    }
+  }
+  async function loadAllowance({ live = false } = {}) {
+    try { P.allowance = await receivableToday(entry.owner, P.rate, { live }); }
+    catch { P.allowance = { error: true }; }
+  }
+
+  // ----- send -----
+  async function submit() {
+    if (P.busy || !P.account) return;
+    P.touched = true;
+    const a0 = readAmount();
+    if (a0.error) { renderForm(); amountIn.focus(); return; }
+    const from = P.account, token = sellToken(), corridor = P.corridor;
+    P.busy = true;
+    payBtn.disabled = true;
+    payBtn.textContent = "Checking @" + tag + "…";
+    msg.replaceChildren();
+    try {
+      // the tag could have moved since the page loaded: re-check right before sending, straight from Blockscout
+      let now;
+      try { now = ownerOf((await loadNtagStateFresh()).state, tag); } catch { throw plainError(`Couldn't re-check @${tag} on Celo, so nothing was sent. Try again in a moment.`); }
+      if (!now || !sameAddr(now.owner, entry.owner)) throw plainError(`@${tag} changed wallets a moment ago, so nothing was sent. Reload the page to see who has it now.`);
+      if (sameAddr(from, now.owner)) throw plainError(`This is @${tag}'s own wallet, so nothing was sent. Connect a different wallet.`);
+      await loadAllowance({ live: true });
+      const a = readAmount();
+      if (a.error) throw plainError(`${a.error} Nothing was sent.`, { limit: a.limit });
+      if (!P.celoAnyway) {
+        const c = await celoBalance(from);
+        if (c === 0n) {
+          P.busy = false;
+          P.celo = 0n;
+          renderForm(); // shows the warning with "Get CELO" and "Pay anyway"
+          problemBox.querySelector("button")?.focus();
+          return;
+        }
+      }
+      payBtn.textContent = "Check your wallet…";
+      await ensureCelo(eth);
+      P.chainOk = true;
+      const [bal] = await readContract(token.address, "0x70a08231", ["address"], [from], ["uint256"]);
+      if (bal < a.units) throw plainError(`This wallet has ${num2.format(Number(bal) / 1e6)} ${token.symbol}, less than ${fmtSend(a.cents)}. Nothing was sent.`);
+      const data = encodeNtagTransfer(AGENT, a.units, tag);
+      const hash = await eth.request({ method: "eth_sendTransaction", params: [{ from, to: token.address, value: "0x0", data }] });
+      if (!isHash(hash)) throw plainError("The wallet didn't return a transaction id. Check your wallet's activity before trying again.");
+      const pending = { hash, from, corridor, cents: a.cents, owner: entry.owner, since: entry.since, at: Date.now() };
+      try { sessionStorage.setItem(PENDING_KEY(tag), JSON.stringify(pending)); } catch { /* storage blocked: tracking works until the page closes */ }
+      P.busy = false;
+      track(pending, { scroll: true });
+    } catch (e) {
+      P.busy = false;
+      if (!P.alive) return;
+      if (e.limit) renderForm();
+      msg.replaceChildren(alertBox("err", "alert", el("p", {}, errText(e))));
+      renderWallet();
+    }
+  }
+
+  // ----- tracking: confirmed on Celo, then the agent's payout to the owner -----
+  function track(p, { scroll = false } = {}) {
+    let stopped = false, stopSlow = null;
+    const stop = () => { stopped = true; stopSlow?.(); };
+    onCleanup(stop);
+    const buy = p.corridor === "usdt-cngn" ? TOKENS.cNGN : TOKENS.USDT;
+    const sendText = p.corridor === "usdt-cngn" ? `${num2.format(p.cents / 100)} USD₮` : `${num2.format(p.cents / 100)} cNGN`;
+    const rows = {};
+    const step = (id, t, sub) => {
+      const small = el("small", {}, sub ?? "");
+      const b = el("b", {}, t);
+      const li = el("li", {}, el("span", { class: "nt-p-icon", "aria-hidden": "true" }), el("div", {}, b, small));
+      rows[id] = { li, small, b };
+      return li;
+    };
+    const set = (id, state, sub, heading) => {
+      const r = rows[id];
+      r.li.className = state ?? "";
+      r.li.firstChild.replaceChildren(...(state === "done" ? [icon("check")] : state === "err" ? [icon("x")] : []));
+      if (state === "active") r.li.setAttribute("aria-current", "step"); else r.li.removeAttribute("aria-current");
+      if (sub !== undefined) r.small.replaceChildren(...[].concat(sub));
+      if (heading) r.b.textContent = heading;
+    };
+    const list = el("ol", { class: "nt-progress" },
+      step("sent", "Sent from your wallet", [sendText, " · ", txLink(p.hash)]),
+      step("chain", "Waiting for Celo to confirm…", ""),
+      step("agent", `The agent pays @${tag}`, "When autopilot next runs, after Celo confirms your payment."),
+      step("paid", "Paid", ""));
+    const status = el("div", { "aria-live": "polite" });
+    const again = el("button", { class: "btn btn-secondary", type: "button" }, "Send another payment");
+    again.addEventListener("click", () => {
+      stop();
+      try { sessionStorage.removeItem(PENDING_KEY(tag)); } catch { /* ignore */ }
+      body.replaceChildren(form);
+      loadAllowance().then(() => { if (P.alive) renderForm(); });
+      renderForm();
+      amountIn.focus();
+    });
+    const h = el("h3", { style: "font-size:20px;font-weight:500" }, "Waiting for Celo to confirm…");
+    const lede = el("p", { class: "small soft mt-8", role: "status" }, `You sent ${sendText} to @${tag}. Keep this page open until Celo confirms it.`);
+    const box = el("div", { class: "nt-track" }, el("div", {}, h, lede), list, status, el("div", { class: "nt-actions" }, again));
+    body.replaceChildren(box);
+    focusHeading(h);
+    if (scroll) requestAnimationFrame(() => scrollToNode(section));
+    set("sent", "done");
+    set("chain", "active", "Usually a few seconds.");
+    stopSlow = slowNotice(rows.chain.small, p.hash);
+
+    const clear = () => { try { sessionStorage.removeItem(PENDING_KEY(tag)); } catch { /* ignore */ } };
+    (async () => {
+      let rc;
+      try {
+        rc = await waitForReceipt(p.hash, { tries: 120, failMessage: "The transfer failed on Celo, so nothing was sent to the agent. Only the network fee was spent." });
+      } catch (e) {
+        stopSlow?.();
+        if (stopped) return;
+        h.textContent = "Payment failed";
+        lede.textContent = "Nothing reached the agent.";
+        set("chain", "err", errText(e), "Celo refused the transfer");
+        clear();
+        return;
+      }
+      stopSlow?.();
+      if (stopped) return;
+      if (!rc) {
+        h.textContent = "Still waiting for Celo";
+        set("chain", "", ["Not confirmed after five minutes. It may still go through. ", txLink(p.hash, "Check it on Celoscan")], "Waiting for Celo to confirm…");
+        return;
+      }
+      h.textContent = "Payment confirmed";
+      lede.textContent = `Celo confirmed your ${sendText} to @${tag}. You can close this page now; the payment still goes through.`;
+      set("chain", "done", "Confirmed.", "Celo confirmed it");
+      set("agent", "active", "When autopilot next runs.");
+      const until = p.at + PAYOUT_WATCH_MS;
+      let noted = "";
+      while (!stopped && Date.now() < until) {
+        if (document.visibilityState === "visible") {
+          try {
+            const { deposits } = await loadTagLedger({ tag, owner: p.owner, sinceSec: p.since ?? entry.since, rate: P.rate });
+            if (stopped) return;
+            const d = deposits.find((x) => String(x.hash).toLowerCase() === p.hash.toLowerCase());
+            if (d?.status === "paid") {
+              const no = receiptNo(d.payout.hash);
+              const got = Number(d.payout.units) / 1e6;
+              set("agent", "done", "Converted on Textile FX and sent.");
+              set("paid", "done", "");
+              status.replaceChildren(el("div", { class: "nt-paid" }, el("span", { class: "nt-paid-icon" }, icon("check")),
+                el("div", {}, el("b", {}, `Paid · ${no}`),
+                  el("span", { class: "small soft" }, `@${tag} got ${buy === TOKENS.cNGN ? naira(got) + " in cNGN" : num2.format(got) + " USD₮"}. `),
+                  el("a", { class: "link small", href: `receipt.html#${no}` }, "Open receipt ", icon("right")))));
+              toast(`@${tag} has been paid`);
+              clear();
+              return;
+            }
+            if (d?.status === "ineligible") {
+              const over = d.reason.kind === "over" || d.reason.kind === "day";
+              set("agent", "err", over ? "Above the limit — not paid automatically." : `${d.reason.text} — not paid.`);
+              status.replaceChildren(alertBox("warn", "alert", el("p", {}, el("b", {}, `${d.reason.text}. `),
+                over ? `The agent's limits are ${LIMITS_TEXT}. ` : "", REFUSED_NOTE, " Your payment stays with the agent.")));
+              clear();
+              return;
+            }
+            if (d?.status === "maybe") {
+              const key = d.payout.hash;
+              if (noted !== key) {
+                noted = key;
+                status.replaceChildren(alertBox("", "info", el("p", {}, `A payout to @${tag} was sent at ${watTime(d.payout.ts)}; it may be for another payment. `,
+                  el("a", { class: "link", href: `receipt.html#${receiptNo(d.payout.hash)}` }, "Open that receipt ", icon("right")))));
+              }
+            }
+          } catch { /* explorer hiccup: try again next round */ }
+        }
+        await sleep(PAYOUT_POLL_MS);
+      }
+      if (!stopped) set("agent", "", "Not paid yet. The agent pays when autopilot next runs; check the Autopilot page, or come back later.");
+    })();
+  }
+
+  // ----- wire up -----
+  for (const b of $$("button", seg)) {
+    b.addEventListener("click", () => {
+      if (P.corridor === b.dataset.corridor) return;
+      P.corridor = b.dataset.corridor;
+      amountIn.value = isNaira() ? "10" : "15000";
+      P.bal = null;
+      renderForm();
+      refreshBalances();
+    });
+  }
+  amountIn.addEventListener("input", renderForm);
+  amountIn.addEventListener("blur", () => { P.touched = true; renderForm(); });
+  if (eth?.on) {
+    const onAccounts = (accs) => { if (P.busy) return; if (walletDisconnected() && !P.account) return; setAccount(accs?.[0] ?? null); };
+    const onChain = (id) => { P.chainOk = String(id).toLowerCase() === CELO_CHAIN; renderWallet(); };
+    eth.on("accountsChanged", onAccounts);
+    eth.on("chainChanged", onChain);
+    onCleanup(() => { eth.removeListener?.("accountsChanged", onAccounts); eth.removeListener?.("chainChanged", onChain); });
+  }
+  loadRate().then((r) => { P.rate = r; }).catch(() => { P.rateFailed = true; })
+    .then(() => { if (P.alive) renderForm(); return loadAllowance(); })
+    .then(() => { if (P.alive) renderForm(); });
+  renderForm();
+  if (eth && !walletDisconnected()) eth.request({ method: "eth_accounts" }).then((accs) => { if (P.alive && accs?.[0] && !P.account) setAccount(accs[0]); }).catch(() => {});
+
+  // a payment sent from this tab earlier (page reloaded): keep tracking it
+  let pending = null;
+  try { pending = JSON.parse(sessionStorage.getItem(PENDING_KEY(tag)) ?? "null"); } catch { pending = null; }
+  if (pending && isHash(pending.hash) && sameAddr(pending.owner, entry.owner) && Date.now() - pending.at < 24 * 3600_000 && (pending.corridor === "usdt-cngn" || pending.corridor === "cngn-usdt")) {
+    setTimeout(() => { if (P.alive) track(pending); }, 0);
+  }
+  return section;
+}
+
+// a hash change only matters when it names another tag (on /@ada the path wins, so the hash never changes the tag)
+addEventListener("hashchange", () => { if (readTag() !== shownTag) render(); });
+render();

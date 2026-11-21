@@ -18,6 +18,11 @@ export const TOKENS = {
   cNGN: { address: "0xF6829D7393dAe24509eb1E52eE8e572e2E271a4f", symbol: "cNGN" },
 };
 export const CAP = 25;
+/** The agent's rolling 24-hour limits (src/config.mjs MAX_WALLET_DAILY_USD and MAX_DAILY_USD). */
+export const WALLET_DAILY_CAP = 25;
+export const DAILY_CAP = 100;
+/** The one-line summary every page shows next to an amount. */
+export const LIMITS_TEXT = `$${CAP} per payment · $${WALLET_DAILY_CAP} per person per day · $${DAILY_CAP} per day overall`;
 export const REPUTATION = "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"; // ERC-8004 Reputation Registry (proxy), Celo mainnet
 export const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 /** Both supported corridors. Amounts for both tokens use 6 decimals on Celo. */
@@ -40,7 +45,42 @@ const MARKER = "80218021802180218021802180218021"; // ERC-8021 suffix marker
 // ---------- formatting ----------
 export const num2 = new Intl.NumberFormat("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 export const naira = (n) => "₦" + num2.format(n);
+/**
+ * Reads a typed money amount as exact cents, never guessing. Accepts "10", "10.5", "1,250.75", "₦14,400",
+ * and a decimal comma "1,5" / "1,50" (= 1.50). Commas count as thousands separators only in groups of three.
+ * Returns { cents } or { error } (plain-English message).
+ */
+export function parseMoneyInput(raw) {
+  let s = String(raw ?? "").replace(/[\s₦$]/g, "").replace(/(usd₮?|usdt|cngn|ngn)$/i, "");
+  if (!s) return { error: "Enter an amount." };
+  if (/^\d+,\d{1,2}$/.test(s) && !/^\d{1,3},\d{3}$/.test(s)) s = s.replace(",", ".");
+  else if (s.includes(",")) {
+    if (!/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) return { error: "Use a dot for decimals, like 10.50." };
+    s = s.replace(/,/g, "");
+  }
+  if (/^\d+\.\d{3,}$/.test(s)) return { error: "Use at most 2 decimals." };
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return { error: "Enter a number, like 10 or 10.50." };
+  const [w, f = ""] = s.split(".");
+  const cents = Number(w) * 100 + Number((f + "00").slice(0, 2));
+  if (!Number.isSafeInteger(cents)) return { error: "That amount is too large." };
+  return { cents };
+}
 export const usd = (n) => "$" + num2.format(n);
+/** "just now" / "12 min ago" / "3 h ago" / "2 days ago", from loadRate()'s ageMin. */
+export function ageText(ageMin) {
+  const m = Math.max(0, Math.round(Number(ageMin) || 0));
+  if (m < 1) return "just now";
+  if (m < 120) return `${m} min ago`;
+  if (m < 48 * 60) return `${Math.round(m / 60)} h ago`;
+  return `${Math.round(m / 1440)} days ago`;
+}
+/** True for failures to reach a server (fetch TypeError, timeout/abort, HTTP status errors), not for bugs or bad data. */
+export function isNetworkError(e) {
+  if (!e) return false;
+  if (e.name === "TimeoutError" || e.name === "AbortError" || e.retry) return true;
+  if (e.name === "TypeError" && /fetch|network|load failed/i.test(String(e.message))) return true;
+  return /^HTTP \d{3}\b/.test(String(e.message));
+}
 export const short = (a) => (a ? a.slice(0, 6) + "…" + a.slice(-4) : "");
 export const lagos = (d, opts) => new Date(d).toLocaleString("en-GB", { timeZone: "Africa/Lagos", ...opts });
 export const lagosTime = (d) => lagos(d, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -269,6 +309,224 @@ export async function loadRegistrations(maxPages = 100) {
   throw new Error("partial registration list");
 }
 
+// ---------- nTags (handles tied to a wallet, onchain) ----------
+// A claim is a zero-value tx FROM the wallet TO the agent with input hex(utf8("NT1:" + JSON)) + tag suffix:
+// {"t":"ada"} or {"t":"ada","n":"Ada Obi"}; {"t":""} releases the sender's tag. Paying a tag = an ERC-20 transfer to the
+// agent with hex(utf8("NTP:" + tag)) appended after the standard 68 bytes. See site/_spec/NTAGS.md.
+// The block between the "port" markers is copied byte-for-byte into src/ntags.mjs (test/ntags.test.mjs checks it).
+// ---------- port: start ----------
+export const NTAG_PREFIX = "NT1:";
+export const NTAG_MEMO_PREFIX = "NTP:";
+export const RELEASE_LOCK_DAYS = 30;
+/** Tags nobody can claim. */
+export const NTAG_RESERVED = new Set([
+  "agent", "admin", "administrator", "root", "system", "support", "help", "official", "team", "staff", "mod", "moderator",
+  "security", "celo", "minipay", "valora", "opera", "textile", "naira", "nairapayout", "payout", "payouts", "ntag", "ntags",
+  "cngn", "usdt", "usdc", "tether", "cusd", "ceur", "wallet", "bank", "cbn", "null", "undefined", "anonymous", "everyone",
+  "me", "you", "test", "demo", "api", "www", "app", "pay", "send", "receive",
+]);
+const NTAG_RESERVED_ERR = "this tag is reserved";
+const NTAG_LOCK_SEC = RELEASE_LOCK_DAYS * 86400;
+/** UI/CLI input only: trim, strip one leading "@", lowercase. The onchain JSON must already be in this form. */
+export const normalizeNtag = (s) => String(s ?? "").trim().replace(/^@/, "").toLowerCase();
+/** Tag rules (3-20 chars, a-z 0-9 _, starts with a letter, no "__", no trailing "_", not reserved). Error string or null. */
+export function ntagError(t) {
+  if (typeof t !== "string" || !t) return "enter a tag";
+  if (/[A-Z]/.test(t)) return "use lowercase letters only";
+  if (!/^[a-z0-9_]+$/.test(t)) return "use only letters, numbers and _";
+  if (!/^[a-z]/.test(t)) return "must start with a letter";
+  if (t.length < 3) return "must be at least 3 characters";
+  if (t.length > 20) return "must be 20 characters or fewer";
+  if (t.includes("__")) return "can't contain __";
+  if (t.endsWith("_")) return "can't end with _";
+  if (NTAG_RESERVED.has(t)) return NTAG_RESERVED_ERR;
+  return null;
+}
+/** Display name rules (optional; 1-40 characters after trimming, no control characters). Error string or null. */
+export function ntagNameError(n) {
+  if (typeof n !== "string") return "invalid name";
+  const v = n.trim();
+  if (!v) return "name can't be blank";
+  if (v.length > 40) return "name must be 40 characters or fewer";
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(v)) return "name can't contain control characters";
+  return null;
+}
+/** Validates a decoded nTag op body: claim {t[,n]} or release {t:""}. Error string or null. */
+export function ntagOpError(op) {
+  if (!op || typeof op !== "object" || Array.isArray(op)) return "not an nTag op";
+  const keys = Object.keys(op);
+  if (keys.some((k) => k !== "t" && k !== "n")) return "unexpected field";
+  if (typeof op.t !== "string") return "invalid tag";
+  if (op.t === "") return "n" in op ? "a release has no name" : null;
+  const err = ntagError(op.t);
+  if (err) return err;
+  if ("n" in op) return ntagNameError(op.n);
+  return null;
+}
+const stripErc8021 = (input) => {
+  let h = String(input ?? "").toLowerCase().replace(/^0x/, "");
+  if (h.endsWith(MARKER)) {
+    const len = parseInt(h.slice(-MARKER.length - 4, -MARKER.length - 2), 16);
+    h = h.slice(0, -(MARKER.length + 4 + len * 2));
+  }
+  return h;
+};
+/** Calldata for a claim tx: hex("NT1:" + JSON) + this app's attribution suffix. Throws on an invalid tag or name. */
+export function encodeNtagClaim({ t, n } = {}) {
+  const name = typeof n === "string" ? n.trim() : n;
+  const body = name ? { t, n: name } : { t };
+  const err = body.t === "" ? "enter a tag" : ntagOpError(body);
+  if (err) throw new Error(err);
+  return "0x" + utf8Hex(NTAG_PREFIX + JSON.stringify(body)) + tagSuffix();
+}
+/** Calldata for a release tx (gives up the sender's current tag). */
+export const encodeNtagRelease = () => "0x" + utf8Hex(NTAG_PREFIX + JSON.stringify({ t: "" })) + tagSuffix();
+/** Parse a tx input as an nTag op (any trailing ERC-8021 suffix stripped). Returns the parsed JSON (unvalidated) or null. */
+export function decodeNtagOp(input) {
+  const h = stripErc8021(input);
+  if (!h.startsWith(utf8Hex(NTAG_PREFIX))) return null;
+  try { return JSON.parse(new TextDecoder().decode(hexBytes(h.slice(utf8Hex(NTAG_PREFIX).length)))); } catch { return null; }
+}
+/** Blockscout transaction item -> op item { hash, from, block, position, time, value, op }, or null (same filter as registrations). */
+export function ntagOpFromItem(t, agent) {
+  if (t?.status !== "ok" || t.to?.hash?.toLowerCase() !== String(agent).toLowerCase()) return null;
+  const op = decodeNtagOp(t.raw_input);
+  if (op == null) return null;
+  return { hash: t.hash, from: t.from?.hash, block: Number(t.block_number ?? t.block), position: Number(t.position ?? 0), time: Math.floor(Date.parse(t.timestamp) / 1000), value: t.value == null ? "0" : String(t.value), op };
+}
+const ntagZeroValue = (v) => {
+  if (v == null) return true;
+  try { return BigInt(String(v)) === 0n; } catch { return false; }
+};
+/**
+ * Replays VALID ops with time <= atSec in (block, position) order. Returns { tags: Map<tag, {owner (lower-case), name,
+ * since (sec), hash, block, position}>, byOwner: Map<lower-case address, tag>, locks: Map<tag, {owner, until (sec)}>,
+ * statuses: Map<hash, "claimed"|"renamed"|"released"|"taken"|"locked"|"reserved"|"invalid"|"noop"> }.
+ */
+export function resolveNtags(ops, atSec = Infinity) {
+  const tags = new Map(), byOwner = new Map(), locks = new Map(), statuses = new Map();
+  const list = (ops ?? []).filter((o) => o && Number(o.time) <= atSec)
+    .sort((x, y) => Number(x.block) - Number(y.block) || Number(x.position) - Number(y.position));
+  const release = (owner, time) => {
+    const t = byOwner.get(owner);
+    if (!t) return false;
+    tags.delete(t);
+    byOwner.delete(owner);
+    locks.set(t, { owner, until: time + NTAG_LOCK_SEC });
+    return true;
+  };
+  for (const o of list) {
+    const from = String(o.from ?? "").toLowerCase();
+    let err = ntagOpError(o.op);
+    if (!err && !/^0x[0-9a-f]{40}$/.test(from)) err = "invalid sender";
+    if (!err && from === AGENT.toLowerCase()) err = "agent";
+    if (!err && !ntagZeroValue(o.value)) err = "non-zero value";
+    if (err) { statuses.set(o.hash, err === NTAG_RESERVED_ERR ? "reserved" : "invalid"); continue; }
+    const time = Number(o.time);
+    const t = o.op.t;
+    if (t === "") { statuses.set(o.hash, release(from, time) ? "released" : "noop"); continue; }
+    const name = "n" in o.op ? o.op.n.trim() : null;
+    const cur = tags.get(t);
+    if (cur && cur.owner === from) {
+      if (name != null && name !== cur.name) { cur.name = name; statuses.set(o.hash, "renamed"); }
+      else statuses.set(o.hash, "noop");
+      continue;
+    }
+    if (cur) { statuses.set(o.hash, "taken"); continue; }
+    const lock = locks.get(t);
+    if (lock && lock.until > time && lock.owner !== from) { statuses.set(o.hash, "locked"); continue; }
+    release(from, time);
+    locks.delete(t);
+    tags.set(t, { owner: from, name, since: time, hash: o.hash, block: Number(o.block), position: Number(o.position) });
+    byOwner.set(from, t);
+    statuses.set(o.hash, "claimed");
+  }
+  return { tags, byOwner, locks, statuses };
+}
+/** State from only the ops strictly before (block, position): what a deposit at that spot pays. */
+export const resolveNtagsBefore = (ops, block, position) => resolveNtags((ops ?? []).filter((o) =>
+  o && (Number(o.block) < Number(block) || (Number(o.block) === Number(block) && Number(o.position) < Number(position)))));
+/** The tag an address currently holds, or null. */
+export const ntagOf = (state, address) => state.byOwner.get(String(address ?? "").toLowerCase()) ?? null;
+/** The current entry { owner, name, since, hash, block, position } for a tag, or null. */
+export const ownerOf = (state, tag) => state.tags.get(tag) ?? null;
+/** "invalid" | "reserved" | "yours" | "taken" | "locked" | "free" for `forAddress` claiming `tag` at nowSec. */
+export function ntagAvailability(state, tag, forAddress, nowSec = Math.floor(Date.now() / 1000)) {
+  const err = ntagError(tag);
+  if (err) return err === NTAG_RESERVED_ERR ? "reserved" : "invalid";
+  const me = String(forAddress ?? "").toLowerCase();
+  const cur = state.tags.get(tag);
+  if (cur) return me && cur.owner === me ? "yours" : "taken";
+  const lock = state.locks.get(tag);
+  if (lock && lock.until > nowSec && lock.owner !== me) return "locked";
+  return "free";
+}
+/** ERC-20 transfer(agent, units) calldata + hex("NTP:" + tag) memo + attribution suffix. Tokens ignore the extra bytes. */
+export function encodeNtagTransfer(agent, units, tag) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(String(agent))) throw new Error("invalid agent address");
+  const v = BigInt(units);
+  if (v <= 0n || v >= 1n << 256n) throw new Error("invalid amount");
+  const err = ntagError(tag);
+  if (err) throw new Error(err);
+  return "0xa9059cbb" + String(agent).toLowerCase().replace(/^0x/, "").padStart(64, "0") + v.toString(16).padStart(64, "0")
+    + utf8Hex(NTAG_MEMO_PREFIX + tag) + tagSuffix();
+}
+/** The tag in a transfer's memo (suffix stripped, selector a9059cbb, then exactly "NTP:" + a valid tag), or null. */
+export function decodeNtagMemo(input) {
+  const h = stripErc8021(input);
+  if (!/^[0-9a-f]*$/.test(h) || h.length % 2 || !h.startsWith("a9059cbb") || h.length <= 136) return null;
+  const memo = new TextDecoder().decode(hexBytes(h.slice(136)));
+  if (!memo.startsWith(NTAG_MEMO_PREFIX)) return null;
+  const tag = memo.slice(NTAG_MEMO_PREFIX.length);
+  return ntagError(tag) ? null : tag;
+}
+// ---------- port: end ----------
+
+let ntagCache = null; // { at (ms), ops } or { promise }
+/**
+ * Every nTag op ever sent to the agent, oldest first (Blockscout, paged to the end; tags never expire). Cached in memory
+ * for 30 s; pass { force: true } to refetch. Throws instead of returning a partial list.
+ */
+export async function loadNtagOps(maxPages = 200, opts = {}) {
+  if (typeof maxPages === "object" && maxPages) { opts = maxPages; maxPages = 200; }
+  if (!opts.force && ntagCache?.ops && Date.now() - ntagCache.at < 30_000) return ntagCache.ops;
+  if (!opts.force && ntagCache?.promise) return ntagCache.promise;
+  const promise = (async () => {
+    const ops = [];
+    let next = null;
+    for (let p = 0; p < maxPages; p++) {
+      const qs = new URLSearchParams({ filter: "to", ...(next ?? {}) });
+      const d = await getJson(`${EXPLORER_API}/addresses/${AGENT}/transactions?${qs}`);
+      if (!Array.isArray(d?.items)) throw new Error("unexpected explorer response");
+      for (const t of d.items) { const o = ntagOpFromItem(t, AGENT); if (o) ops.push(o); }
+      next = d.next_page_params ?? null;
+      if (!next) return ops.sort((x, y) => x.block - y.block || x.position - y.position);
+    }
+    throw new Error("partial nTag list");
+  })();
+  ntagCache = { promise };
+  try {
+    const ops = await promise;
+    if (ntagCache?.promise === promise) ntagCache = { at: Date.now(), ops };
+    return ops;
+  } catch (e) {
+    if (ntagCache?.promise === promise) ntagCache = null;
+    throw e;
+  }
+}
+/** Public link to a tag: /@tag on Vercel, else tag.html#tag next to the current page (all pages sit at the site root). */
+export function ntagUrl(tag) {
+  if (typeof location === "undefined") return HAS_API ? `/@${tag}` : `tag.html#${tag}`;
+  return HAS_API ? `${location.origin}/@${tag}` : new URL(`tag.html#${tag}`, location.href).href;
+}
+/** Three deterministic hues (0-359) from an address, for a CSS gradient avatar. */
+export function avatarSeed(address) {
+  let h = 0x811c9dc5; // FNV-1a over the lower-case address
+  for (const c of String(address ?? "").toLowerCase()) { h ^= c.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
+  const a = h % 360;
+  return [a, (a + 40 + ((h >>> 9) % 80)) % 360, (a + 160 + ((h >>> 17) % 80)) % 360];
+}
+
 // ---------- receipt numbers (Receipt v2) ----------
 /** NP-XXXX-XXXX from a payout tx hash. */
 export const receiptNo = (hash) => "NP-" + hash.slice(2, 6).toUpperCase() + "-" + hash.slice(6, 10).toUpperCase();
@@ -480,7 +738,9 @@ function consentBanner() {
     el("div", { class: "consent-body" },
       el("h2", { id: "consent-title" }, "Quick one"),
       el("p", { id: "consent-text" },
-        "We don't track you. No cookies, no analytics. Can we remember how you like the layout on this device? Everything works either way. ",
+        // phones get the short line (the long one would cover a fifth of the screen); both say the same thing
+        el("span", { class: "consent-long" }, "We don't track you. No cookies, no analytics. Can we remember how you like the layout on this device? Everything works either way. "),
+        el("span", { class: "consent-short" }, "No tracking, no cookies. Remember your layout on this device? "),
         policy, ".")),
     el("div", { class: "consent-actions" }, decline, accept));
   box.addEventListener("click", (e) => {
@@ -587,8 +847,10 @@ function initSidebar() {
 export function initChrome() {
   initConsent();
   const here = location.pathname.split("/").pop() || "index.html";
-  for (const a of document.querySelectorAll(".nav-links a, .sb-nav a")) {
-    if (a.getAttribute("href") === here) a.setAttribute("aria-current", "page");
+  // a sidebar entry also stays current on the pages grouped under it (data-also="receipt.html verify.html")
+  for (const a of document.querySelectorAll(".nav-links a, .sb-nav a, .subnav a")) {
+    const also = (a.getAttribute("data-also") || "").split(/\s+/);
+    if (a.getAttribute("href") === here || also.includes(here)) a.setAttribute("aria-current", "page");
   }
   initSidebar();
   // any element with data-copy="text" copies that text on click
@@ -598,4 +860,8 @@ export function initChrome() {
   });
   const y = document.getElementById("year");
   if (y) y.textContent = String(new Date().getFullYear());
+  // the signed-in user chip (sidebar foot + mobile top bar); loaded separately so a failure never breaks the page
+  if (document.getElementById("sb-user") || document.getElementById("nav-user")) {
+    import("./session.js").then((m) => m.initUserChip()).catch(() => { /* the static "Sign in" link stays */ });
+  }
 }

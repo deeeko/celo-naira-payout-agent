@@ -1,0 +1,688 @@
+// nTag UI pieces shared by the landing, account and tag pages: the tag card (tilt + holographic sheen), the live
+// "find an nTag" search, availability wording, tag suggestions, the QR code and transaction confirmation polling.
+// The top level stays free of window/document access so the pure helpers can be tested in Node.
+import {
+  el, icon, short, ntagUrl, normalizeNtag, ntagError, ntagAvailability, resolveNtags, ownerOf, loadNtagOps, loadReceipt,
+  lagos, AGENT, TOKENS, CAP, EXPLORER_API, getJson, rpc, ntagOpFromItem, decodeNtagMemo, celoscanTx,
+} from "./core.js";
+import { avatar } from "./session.js";
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+export const sameAddr = (a, b) => String(a ?? "").toLowerCase() === String(b ?? "").toLowerCase();
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export const reducedMotion = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+/** An Error whose message is already plain language (shown as is, not passed through explainWalletError). */
+export const plainError = (message, extra = {}) => Object.assign(new Error(message), { plain: true }, extra);
+
+export function alertBox(kind, iconName, ...children) {
+  return el("div", { class: `alert${kind ? " " + kind : ""}`, role: kind === "err" ? "alert" : null }, icon(iconName), el("div", {}, ...children));
+}
+/** A display name chosen by a tag's owner, isolated so right-to-left or control characters can't reorder the text around it. */
+export const nameText = (name) => el("bdi", { class: "nt-dispname" }, String(name ?? ""));
+
+// ---------- the agent's limits (same numbers as src/config.mjs and src/ntag.mjs) ----------
+export const LIMITS = { perPayment: CAP, perPersonDay: 25, perDay: 100 };
+export const LIMITS_TEXT = `$${LIMITS.perPayment} per payment · $${LIMITS.perPersonDay} per person per day · $${LIMITS.perDay} per day overall`;
+/** cNGN payments stop 3% under the per-payment cap: the agent values cNGN with a fresh quote when it pays (its slippage margin). */
+export const CNGN_MARGIN_BPS = 300;
+export const CNGN_CAP_USD = (CAP * (10000 - CNGN_MARGIN_BPS)) / 10000; // 24.25
+/** How far a payout may be from what a deposit should bring and still count as its payout (the agent's slippage limit). */
+export const PAYOUT_MARGIN_BPS = 300;
+export const REFUSED_NOTE = "Payments over a limit are refused, and the agent doesn't pay out a refused payment automatically.";
+export const DAY_MS = 86_400_000;
+export const BLOCKSCOUT_API = "https://celo.blockscout.com/api/v2";
+
+// ---------- pure helpers (tested in test/ntag-ui.test.mjs) ----------
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+/** "Nov 2026" from unix seconds, in Lagos time. */
+export const monthYear = (sec) => lagos(sec * 1000, { month: "short", year: "numeric" });
+/** "21 Dec 2026" from unix seconds, in Lagos time. */
+export const dayMonthYear = (sec) => lagos(sec * 1000, { day: "numeric", month: "short", year: "numeric" });
+
+/**
+ * The sentence shown for a tag's availability. kind = ntagAvailability(...) result. Returns { text, tone } where tone
+ * is "ok" | "warn" | "err" | "muted". `lock` = state.locks.get(tag), `owner` = ownerOf(state, tag).
+ */
+export function availabilityMessage(tag, kind, { owner = null, lock = null } = {}) {
+  switch (kind) {
+    case "free": return { text: `@${tag} is available.`, tone: "ok" };
+    case "yours": return { text: `@${tag} is already yours.`, tone: "ok" };
+    case "taken": return { text: `@${tag} is taken${owner?.owner ? ` by ${short(owner.owner)}` : ""}.`, tone: "err" };
+    case "reserved": return { text: `@${tag} is reserved, so nobody can claim it.`, tone: "warn" };
+    case "locked": return { text: `@${tag} was released recently. Until ${lock ? dayMonthYear(lock.until) : "the 30-day hold ends"}, only its previous owner can claim it.`, tone: "warn" };
+    case "invalid": return { text: `${cap(ntagError(tag) ?? "not a valid tag")}.`, tone: "err" };
+    default: return { text: "", tone: "muted" };
+  }
+}
+
+/** Live rule checklist for the tag input: [{ id, label, ok (true/false/null when empty) }]. */
+export function ntagRules(t) {
+  const v = String(t ?? "");
+  const has = v.length > 0;
+  return [
+    { id: "len", label: "3 to 20 characters", ok: has ? v.length >= 3 && v.length <= 20 : null },
+    { id: "chars", label: "a–z, 0–9 and _", ok: has ? /^[a-z0-9_]+$/.test(v) : null },
+    { id: "start", label: "Starts with a letter", ok: has ? /^[a-z]/.test(v) : null },
+    { id: "under", label: "No __ and no _ at the end", ok: has ? !v.includes("__") && !v.endsWith("_") : null },
+  ];
+}
+
+/** Turns what someone typed into tag form as they type: lower-case, no leading @, no spaces, at most 20 characters. */
+export const cleanTagInput = (s) => normalizeNtag(s).replace(/\s+/g, "").slice(0, 20);
+
+/**
+ * Up to n free tags close to `base` (and the display name, if any), for when the one asked for is taken.
+ * Every suggestion passes the tag rules and is "free" in `state` for `address`.
+ */
+export function suggestNtags(base, name, state, address, n = 3) {
+  let b = String(base ?? "").toLowerCase().replace(/[^a-z0-9_]/g, "").replace(/_+/g, "_").replace(/_+$/, "");
+  if (!/^[a-z]/.test(b)) b = "n" + b;
+  b = b.slice(0, 15).replace(/_+$/, "");
+  if (b.length < 2) b = (b + "pay").slice(0, 5);
+  const words = String(name ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .split(/[^a-z0-9]+/).filter((w) => /^[a-z]/.test(w));
+  const first = words[0], last = words.length > 1 ? words[words.length - 1] : null;
+  const cands = [];
+  if (last && last !== b) cands.push(b + last, b + "_" + last, b + "_" + last[0]);
+  if (first && first !== b) cands.push(first + "_" + b, first + b);
+  cands.push(b + "_ng", b + "ng", "the" + b, b + "01", b + "_pay", b + "hq", b + "x", b + "_07", b + "_9ja", "real" + b);
+  for (let i = 2; i <= 99; i++) cands.push(b + String(i).padStart(2, "0"));
+  const out = [];
+  for (const c of cands) {
+    const t = c.slice(0, 20).replace(/_+$/, "");
+    if (out.includes(t) || ntagError(t)) continue;
+    if (ntagAvailability(state, t, address) !== "free") continue;
+    out.push(t);
+    if (out.length >= n) break;
+  }
+  return out;
+}
+
+/** "Good morning" / "Good afternoon" / "Good evening", by the hour in Lagos. */
+export function greeting(date = new Date()) {
+  const h = Number(lagos(date, { hour: "numeric", hourCycle: "h23" }));
+  return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+}
+
+/** The WhatsApp share link for a tag. */
+export function whatsappUrl(tag, url = ntagUrl(tag)) {
+  return "https://wa.me/?text=" + encodeURIComponent(`You can pay me in dollars or naira on Celo with my nTag @${tag}: ${url}`);
+}
+
+// ---------- payments to a tag: values, eligibility, matching deposits to payouts (pure, tested) ----------
+const lc = (s) => String(s ?? "").toLowerCase();
+/** "USDT" | "CNGN" | null for a token address. */
+export const tokenKey = (addr) => (lc(addr) === lc(TOKENS.USDT.address) ? "USDT" : lc(addr) === lc(TOKENS.cNGN.address) ? "CNGN" : null);
+const buyOf = (token) => (token === "USDT" ? "CNGN" : "USDT");
+const byChain = (a, b) => a.block - b.block || a.logIndex - b.logIndex;
+/** Strictly later in the chain than d (block, then log index). */
+const isAfter = (p, d) => p.block > d.block || (p.block === d.block && p.logIndex > d.logIndex);
+
+/** USD value of a deposit as the agent counts it (cNGN at the cNGN → USD₮ rate), or null without a rate. rate = loadRate(). */
+export function depositUsd(token, units, rate) {
+  if (token === "USDT") return Number(units) / 1e6;
+  const rr = Number(rate?.reverseRate);
+  return rr > 0 ? (Number(units) / 1e6) * rr : null;
+}
+/** USD value of an agent payout (cNGN at the naira rate), or null without a rate. */
+export function payoutUsd(token, units, rate) {
+  if (token === "USDT") return Number(units) / 1e6;
+  const r = Number(rate?.rate);
+  return r > 0 ? Number(units) / 1e6 / r : null;
+}
+/** Units of the payout token a deposit should bring at today's rate (an estimate), or null without a rate. */
+export function expectedPayoutUnits(token, units, rate) {
+  const r = token === "USDT" ? Number(rate?.rate) : Number(rate?.reverseRate);
+  return r > 0 ? BigInt(Math.floor(Number(units) * r)) : null;
+}
+/**
+ * Why the agent would not pay a deposit to a tag automatically, or null: { kind: "self" | "min" | "over", text }.
+ * Same rules as depositIneligible in src/ntag.mjs (USD₮ $1-$25; cNGN at least ₦1,000 and worth $1-$25).
+ */
+export function depositIneligible({ token, units, payer, owner }, rate) {
+  if (sameAddr(payer, owner)) return { kind: "self", text: "Sent from the tag's own wallet" };
+  const u = BigInt(units);
+  if (token === "USDT") {
+    if (u < 1_000_000n) return { kind: "min", text: "Below the $1 minimum" };
+    if (u > BigInt(LIMITS.perPayment) * 1_000_000n) return { kind: "over", text: `Over $${LIMITS.perPayment} in one payment` };
+    return null;
+  }
+  if (u < 1_000_000_000n) return { kind: "min", text: "Below the ₦1,000 minimum" };
+  const v = depositUsd(token, units, rate);
+  if (v == null) return null;
+  if (v < 1) return { kind: "min", text: "Worth less than $1" };
+  if (v > LIMITS.perPayment) return { kind: "over", text: `Worth over $${LIMITS.perPayment} in one payment` };
+  return null;
+}
+const within = (units, expected, bps) => {
+  const u = BigInt(units), e = BigInt(expected);
+  return e > 0n && (u > e ? u - e : e - u) * 10000n <= e * BigInt(bps);
+};
+/**
+ * Which agent payout belongs to which deposit to a tag.
+ *   deposits: [{ hash, logIndex, block, ts (ms), token "USDT"|"CNGN", units (bigint), payer }]
+ *   payouts: the agent's transfers to the owner, any token, including the day before the claim:
+ *            [{ hash, logIndex, block, ts, token, units }]
+ * In chain order, deposits the agent refuses are skipped (self-payment, under the minimum, over $25, or over the owner's
+ * $25 a day), and each other deposit takes the earliest unused payout after it, in the other token, whose value is within
+ * `marginBps` of what it should bring. Returns the deposits in chain order with
+ *   status "paid" (payout), "maybe" (payout, a later payout that can't be pinned to it), "none" or "ineligible" (reason).
+ */
+export function matchTagLedger({ deposits = [], payouts = [], owner, rate, marginBps = PAYOUT_MARGIN_BPS, dayLimitUsd = LIMITS.perPersonDay }) {
+  const ds = [...deposits].sort(byChain);
+  const ps = [...payouts].sort(byChain);
+  const fits = (p, d) => d.expected != null && p.token === buyOf(d.token) && within(p.units, d.expected, marginBps);
+  const used = new Set();
+  const out = [];
+  for (const d0 of ds) {
+    const d = { ...d0, usd: depositUsd(d0.token, d0.units, rate), expected: expectedPayoutUnits(d0.token, d0.units, rate), payout: null };
+    const why = depositIneligible({ token: d.token, units: d.units, payer: d.payer, owner }, rate);
+    if (why) { out.push({ ...d, status: "ineligible", reason: why }); continue; }
+    if (d.usd != null) {
+      // what the agent already paid this wallet in the 24 hours before the deposit (cNGN payouts valued at today's rate)
+      let prior = 0;
+      for (const p of ps) if (p.ts <= d.ts && p.ts > d.ts - DAY_MS && !isAfter(p, d)) prior += payoutUsd(p.token, p.units, rate) ?? 0;
+      if (prior + d.usd > dayLimitUsd + 0.005) {
+        out.push({ ...d, status: "ineligible", reason: { kind: "day", text: `Over $${dayLimitUsd} to this wallet in 24 hours` } });
+        continue;
+      }
+    }
+    const p = ps.find((x) => !used.has(x) && isAfter(x, d) && fits(x, d));
+    if (p) used.add(p);
+    out.push({ ...d, status: p ? "paid" : "none", payout: p ?? null });
+  }
+  for (const d of out) {
+    if (d.status === "paid") {
+      // ambiguous when another deposit the agent should pay is still unmatched and this payout would fit it too
+      if (out.some((o) => o !== d && o.status === "none" && isAfter(d.payout, o) && fits(d.payout, o))) d.status = "maybe";
+    } else if (d.status === "none") {
+      const later = ps.find((x) => !used.has(x) && isAfter(x, d) && x.token === buyOf(d.token));
+      if (later) { d.status = "maybe"; d.payout = later; d.unmatched = true; }
+    }
+  }
+  return out;
+}
+/** What `owner` can still receive from the agent today: { usedUsd, leftUsd, payouts } from Blockscout transfer items. */
+export function allowanceFrom(transfers, { owner, rate, now = Date.now(), cap = LIMITS.perPersonDay }) {
+  const payouts = [];
+  let used = 0;
+  for (const t of transfers) {
+    if (!sameAddr(t.from, AGENT) || (owner && !sameAddr(t.to, owner)) || !t.token || t.ts <= now - DAY_MS) continue;
+    const v = payoutUsd(t.token, t.units, rate);
+    if (v == null) throw new Error("no naira rate to value the naira payouts");
+    used += v;
+    payouts.push({ ts: t.ts, usd: v });
+  }
+  payouts.sort((a, b) => a.ts - b.ts);
+  return { usedUsd: used, leftUsd: Math.max(0, cap - used), capUsd: cap, payouts };
+}
+/** When (ms) enough of today's payouts drop out of the 24-hour window for `needUsd` to fit, or null if it fits now. */
+export function allowanceResetAt(alw, needUsd) {
+  if (!alw || needUsd <= alw.leftUsd + 0.005) return null;
+  let left = alw.leftUsd;
+  for (const p of alw.payouts) {
+    left += p.usd;
+    if (needUsd <= Math.min(alw.capUsd, left) + 0.005) return p.ts + DAY_MS;
+  }
+  return alw.payouts.length ? alw.payouts[alw.payouts.length - 1].ts + DAY_MS : null;
+}
+
+// ---------- the ring mark ----------
+export function ringMark(cls = "ntag-ring") {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", cls);
+  svg.setAttribute("viewBox", "0 0 32 32");
+  svg.setAttribute("aria-hidden", "true");
+  const ring = (cx, cy, color) => {
+    const c = document.createElementNS(SVG_NS, "circle");
+    c.setAttribute("cx", cx); c.setAttribute("cy", cy); c.setAttribute("r", "9.2");
+    c.setAttribute("fill", "none"); c.setAttribute("stroke", color); c.setAttribute("stroke-width", "2.6");
+    return c;
+  };
+  svg.append(ring(12.6, 19.4, "#6ff0b0"), ring(19.4, 12.6, "#fcff52"));
+  return svg;
+}
+
+// ---------- the nTag card ----------
+/**
+ * Builds the card. props: { tag, name, address, since (sec), kind: "live" | "preview" | "ghost", stamp (text),
+ * as: "div" | "button" | "a", href, label (accessible name) }. Returns the element; call card.update(props) to change it.
+ */
+export function ntagCard(props = {}) {
+  const as = props.as ?? "div";
+  const handle = el("span", { class: "ntag-handle" });
+  const name = el("span", { class: "ntag-name" });
+  const addr = el("span", { class: "ntag-addr" });
+  const since = el("span", { class: "ntag-since" });
+  const stampText = el("span", {});
+  const stampCheck = icon("check");
+  const stamp = el("span", { class: "ntag-stamp", "aria-hidden": "true" }, stampCheck, stampText);
+  const front = el("div", { class: "ntag-face ntag-front" },
+    el("span", { class: "ntag-guilloche" }),
+    el("div", { class: "ntag-top" }, el("span", { class: "ntag-brand" }, ringMark(), "nTag"), el("span", { class: "ntag-net" }, "Celo")),
+    el("div", { class: "ntag-main" }, handle, name),
+    el("div", { class: "ntag-bottom" }, addr, since),
+    el("span", { class: "ntag-sheen" }), el("span", { class: "ntag-glare" }));
+  const back = el("div", { class: "ntag-face ntag-back", "aria-hidden": "true" },
+    el("span", { class: "ntag-guilloche" }), ringMark("ntag-ring lg"), el("span", { class: "ntag-back-line" }, "Pay by name on Celo"),
+    el("span", { class: "ntag-sheen" }));
+  const attrs = { class: "ntag-card" };
+  if (as === "button") attrs.type = "button";
+  if (as === "a") attrs.href = props.href;
+  const card = el(as, attrs, el("div", { class: "ntag-tilt" }, el("div", { class: "ntag-flip" }, front, back), stamp));
+  if (as === "div") card.setAttribute("aria-hidden", "true"); // decorative: the same facts are on the page as text
+
+  card.update = (p = {}) => {
+    Object.assign(props, p);
+    const kind = props.kind ?? "live";
+    const tag = props.tag || "";
+    const shown = tag || "yourtag";
+    card.classList.toggle("is-preview", kind === "preview");
+    card.classList.toggle("is-ghost", kind === "ghost");
+    card.style.setProperty("--len", String(shown.length + 1));
+    handle.classList.toggle("is-placeholder", !tag);
+    handle.replaceChildren(el("span", { class: "ntag-at" }, "@"), shown);
+    const nm = (props.name ?? "").trim();
+    name.classList.toggle("is-placeholder", !nm);
+    name.textContent = nm || (kind === "preview" ? "Display name (optional)" : kind === "ghost" ? "Not claimed yet" : "");
+    addr.textContent = props.address ? short(props.address) : "0x····…····";
+    since.textContent = props.since ? `Since ${monthYear(props.since)}` : kind === "preview" ? "Preview" : "";
+    stampText.textContent = props.stamp ?? "";
+    stampCheck.style.display = kind === "ghost" ? "none" : ""; // "Unclaimed", "Reserved", "On hold": no tick
+    card.classList.toggle("is-stamped", Boolean(props.stamp));
+    if (as !== "div") card.setAttribute("aria-label", props.label ?? `nTag @${shown}${nm ? ", " + nm : ""}`);
+    return card;
+  };
+  card.update();
+  if (props.tilt !== false) enableTilt(card);
+  return card;
+}
+
+/** Pointer-following tilt (at most 8 degrees) and sheen, via CSS custom properties. Off with reduced motion and on touch. */
+export function enableTilt(card) {
+  if (reducedMotion()) return;
+  let raf = 0, last = null;
+  const apply = () => {
+    raf = 0;
+    if (!last) return;
+    const r = card.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    const x = Math.min(1, Math.max(0, (last.x - r.left) / r.width));
+    const y = Math.min(1, Math.max(0, (last.y - r.top) / r.height));
+    card.style.setProperty("--rx", ((0.5 - y) * 16).toFixed(2) + "deg");
+    card.style.setProperty("--ry", ((x - 0.5) * 16).toFixed(2) + "deg");
+    card.style.setProperty("--mx", (x * 100).toFixed(1) + "%");
+    card.style.setProperty("--my", (y * 100).toFixed(1) + "%");
+    card.style.setProperty("--hyp", Math.min(1, Math.hypot(x - 0.5, y - 0.5) * 2).toFixed(3));
+  };
+  card.addEventListener("pointermove", (e) => {
+    if (e.pointerType === "touch") return;
+    last = { x: e.clientX, y: e.clientY };
+    card.classList.add("is-active");
+    if (!raf) raf = requestAnimationFrame(apply);
+  });
+  card.addEventListener("pointerleave", () => {
+    last = null;
+    card.classList.remove("is-active");
+    for (const [k, v] of [["--rx", "0deg"], ["--ry", "0deg"], ["--mx", "32%"], ["--my", "18%"], ["--hyp", "0"]]) card.style.setProperty(k, v);
+  });
+}
+
+/** The claim moment: the card flips in, the stamp lands, a ring of light. Resolves when it has played. */
+export function revealCard(card, stamp = "Yours") {
+  card.update({ stamp });
+  card.classList.remove("is-revealing");
+  void card.offsetWidth; // restart the animation
+  card.classList.add("is-revealing");
+  const ms = reducedMotion() ? 300 : 2400;
+  return sleep(ms).then(() => card.classList.remove("is-revealing"));
+}
+
+/** A card on its "stage" (floor shadow + glow), with an optional caption. */
+export const stage = (card, caption) => el("div", { class: "ntag-stage" }, card, caption ? el("p", { class: "ntag-caption" }, caption) : null);
+
+// ---------- QR code ----------
+/** QR as DOM SVG (no innerHTML, no data: URLs, works under the CSP). Same drawing as get-paid.js. */
+export function renderQr(box, text, label = "QR code of the link") {
+  const lib = globalThis.qrcode;
+  if (typeof lib !== "function") {
+    box.replaceChildren(el("p", { class: "small muted" }, "The QR code couldn't be drawn. Copy the link instead."));
+    return;
+  }
+  const qr = lib(0, "M");
+  qr.addData(text);
+  qr.make();
+  const n = qr.getModuleCount(), quiet = 4, size = n + quiet * 2;
+  let d = "";
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) d += `M${c + quiet} ${r + quiet}h1v1h-1z`;
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", label);
+  svg.setAttribute("shape-rendering", "crispEdges");
+  const bg = document.createElementNS(SVG_NS, "rect");
+  bg.setAttribute("width", size); bg.setAttribute("height", size); bg.setAttribute("fill", "#fff");
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", d); path.setAttribute("fill", "#07120c");
+  svg.append(bg, path);
+  box.replaceChildren(svg);
+}
+
+/** A QR-code glyph, drawn here because the shared icon sprite (identical on every page) has none. */
+function qrIcon() {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "i");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.8");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  for (const [x, y] of [[3.5, 3.5], [14, 3.5], [3.5, 14]]) {
+    const r = document.createElementNS(SVG_NS, "rect");
+    for (const [k, v] of [["x", x], ["y", y], ["width", 6.5], ["height", 6.5], ["rx", 1.2]]) r.setAttribute(k, String(v));
+    svg.append(r);
+  }
+  const p = document.createElementNS(SVG_NS, "path");
+  p.setAttribute("d", "M14 14h2.5v2.5H14zM18.5 14h2M20.5 18v2.5H18M14 20.5h1.5M6.75 6.75h.01M17.25 6.75h.01M6.75 17.25h.01");
+  svg.append(p);
+  return svg;
+}
+
+/** Link field + Copy, WhatsApp, Open and a QR toggle for a tag. */
+export function shareBlock(tag, { openLabel = "Open pay page" } = {}) {
+  const url = ntagUrl(tag);
+  const qrBox = el("div", { class: "nt-qr", id: `qr-${tag}`, hidden: true });
+  const qrBtn = el("button", { class: "btn btn-ghost btn-sm", type: "button", "aria-expanded": "false", "aria-controls": `qr-${tag}` }, qrIcon(), "Show QR code");
+  qrBtn.addEventListener("click", () => {
+    const show = qrBox.hidden;
+    if (show && !qrBox.firstChild) renderQr(qrBox, url, `QR code for the @${tag} pay page`);
+    qrBox.hidden = !show;
+    qrBtn.setAttribute("aria-expanded", String(show));
+    qrBtn.lastChild.textContent = show ? "Hide QR code" : "Show QR code";
+  });
+  return el("div", { class: "nt-share" },
+    el("div", { class: "nt-linkfield" }, el("span", { title: url }, url.replace(/^https?:\/\//, "")),
+      el("button", { class: "btn btn-primary btn-sm", type: "button", dataset: { copy: url, copyLabel: "Link copied" } }, icon("copy"), "Copy link")),
+    el("div", { class: "row" },
+      el("a", { class: "btn btn-wa btn-sm", href: whatsappUrl(tag, url), target: "_blank", rel: "noopener" }, "Share on WhatsApp"),
+      el("a", { class: "btn btn-secondary btn-sm", href: url }, icon("right"), openLabel),
+      qrBtn),
+    qrBox);
+}
+
+// ---------- transactions ----------
+/**
+ * Polls for a receipt. Resolves the receipt when it succeeded, null if it is still pending after `tries`.
+ * Throws a plain error if it failed onchain.
+ */
+export async function waitForReceipt(hash, { tries = 72, ms = 2500, failMessage = "The transaction failed on Celo. Only the network fee was spent." } = {}) {
+  for (let i = 0; i < tries; i++) {
+    await sleep(ms);
+    let rc = null;
+    try { rc = await loadReceipt(hash); } catch { continue; }
+    if (!rc) continue;
+    if (rc.status === "0x1") return rc;
+    throw plainError(failMessage, { hash });
+  }
+  return null;
+}
+
+/**
+ * While a transaction waits for Celo: after `after` ms, shows "Taking longer than usual (0:34). Check Celoscan" in
+ * `node` and keeps the timer running. Returns stop(). The link is built once so keyboard focus on it survives.
+ */
+export function slowNotice(node, hash, { after = 20_000, start = Date.now() } = {}) {
+  const clock = el("span", { class: "num" });
+  let shown = false;
+  const tick = () => {
+    const ms = Date.now() - start;
+    if (ms < after) return;
+    const s = Math.floor(ms / 1000);
+    clock.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    if (!shown) {
+      shown = true;
+      node.replaceChildren("Taking longer than usual (", clock, "). ",
+        el("a", { class: "link", href: celoscanTx(hash), target: "_blank", rel: "noopener" }, "Check Celoscan ", icon("ext")));
+    }
+  };
+  const id = setInterval(tick, 1000);
+  tick();
+  return () => clearInterval(id);
+}
+
+// ---------- reading Celo state right before a transaction (bypasses the site's edge cache) ----------
+const fresh = { cache: "no-store" };
+/** Every nTag op, read straight from Blockscout (not through /api/explorer's cache). Resolves { ops, state }. */
+export async function loadNtagStateFresh(maxPages = 200) {
+  const ops = [];
+  let next = null;
+  for (let p = 0; p < maxPages; p++) {
+    const qs = new URLSearchParams({ filter: "to", ...(next ?? {}) });
+    const d = await getJson(`${BLOCKSCOUT_API}/addresses/${AGENT}/transactions?${qs}`, fresh);
+    if (!Array.isArray(d?.items)) throw new Error("unexpected explorer response");
+    for (const t of d.items) { const o = ntagOpFromItem(t, AGENT); if (o) ops.push(o); }
+    next = d.next_page_params ?? null;
+    if (!next) {
+      ops.sort((x, y) => x.block - y.block || x.position - y.position);
+      return { ops, state: resolveNtags(ops) };
+    }
+  }
+  throw new Error("partial nTag list");
+}
+
+/** Blockscout token-transfer item -> { hash, logIndex, block, ts (ms), from, to, token "USDT"|"CNGN"|null, units }, or null. */
+export function transferItem(it) {
+  const hash = it?.transaction_hash ?? it?.tx_hash;
+  if (!hash || !it?.from?.hash || !it?.to?.hash) return null;
+  let units;
+  try { units = BigInt(it.total?.value ?? "0"); } catch { return null; }
+  return {
+    hash, logIndex: Number(it.log_index ?? 0), block: Number(it.block_number ?? 0), ts: Date.parse(it.timestamp),
+    from: it.from.hash, to: it.to.hash, token: tokenKey(it.token?.address_hash ?? it.token?.address), units,
+  };
+}
+/** Stablecoin transfers to `address` (newest first) back to `sinceMs`: { items, complete }. live = straight from Blockscout. */
+async function transfersTo(address, { sinceMs = 0, pages = 4, live = false } = {}) {
+  const items = [];
+  let next = null;
+  for (let p = 0; p < pages; p++) {
+    const qs = new URLSearchParams({ type: "ERC-20", filter: "to", ...(next ?? {}) });
+    const d = await getJson(`${live ? BLOCKSCOUT_API : EXPLORER_API}/addresses/${address}/token-transfers?${qs}`, live ? fresh : {});
+    if (!Array.isArray(d?.items)) throw new Error("unexpected explorer response");
+    for (const it of d.items) {
+      const t = transferItem(it);
+      if (!t) continue;
+      if (t.ts < sinceMs) return { items, complete: true };
+      if (t.token && sameAddr(t.to, address)) items.push(t);
+    }
+    next = d.next_page_params ?? null;
+    if (!next) return { items, complete: true };
+  }
+  return { items, complete: false };
+}
+/** How much more `owner` can receive from the agent today (see allowanceFrom). live = bypass the edge cache. Throws if unsure. */
+export async function receivableToday(owner, rate, { live = false, now = Date.now() } = {}) {
+  const r = await transfersTo(owner, { sinceMs: now - DAY_MS, pages: 6, live });
+  if (!r.complete) throw new Error("too many transfers to check");
+  return allowanceFrom(r.items, { owner, rate, now });
+}
+
+const memoCache = new Map(); // deposit tx hash -> tag in its memo (or null); transactions never change
+async function mapLimit(items, n, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length) { const k = i++; try { out[k] = await fn(items[k]); } catch { out[k] = undefined; } }
+  }));
+  return out;
+}
+/**
+ * Payments to `tag` since the claim (`sinceSec`), each matched to the agent's payout to `owner` (matchTagLedger).
+ * Resolves { deposits (newest first), partial }. partial = some deposits couldn't be checked.
+ */
+export async function loadTagLedger({ tag, owner, sinceSec, rate, live = false, maxLookups = 60 }) {
+  const sinceMs = sinceSec * 1000;
+  const [incoming, toOwner] = await Promise.all([
+    transfersTo(AGENT, { sinceMs, pages: 4, live }),
+    transfersTo(owner, { sinceMs: sinceMs - DAY_MS, pages: 4, live }),
+  ]);
+  const cands = incoming.items.filter((t) => !sameAddr(t.from, AGENT)).slice(0, maxLookups);
+  const memos = await mapLimit(cands, 4, async (t) => {
+    if (memoCache.has(t.hash)) return memoCache.get(t.hash);
+    const tx = await rpc("eth_getTransactionByHash", [t.hash]);
+    if (!tx) return undefined; // not visible yet: look again next time
+    const tok = t.token === "USDT" ? TOKENS.USDT.address : TOKENS.cNGN.address;
+    const m = sameAddr(tx.to, tok) ? decodeNtagMemo(tx.input) : null;
+    memoCache.set(t.hash, m);
+    return m;
+  });
+  const deposits = cands.filter((t, i) => memos[i] === tag).map((t) => ({ ...t, payer: t.from }));
+  const payouts = toOwner.items.filter((t) => sameAddr(t.from, AGENT));
+  const matched = matchTagLedger({ deposits, payouts, owner, rate });
+  const partial = !incoming.complete || incoming.items.length > cands.length || memos.some((m) => m === undefined);
+  return { deposits: matched.reverse(), partial };
+}
+
+// ---------- page helpers ----------
+/** Scrolls `node` into view below the sticky / fixed top bar; instant under reduced motion. */
+export function scrollToNode(node) {
+  if (!node?.getBoundingClientRect) return;
+  let top = 0;
+  const bar = document.querySelector(".nav-wrap");
+  if (bar) {
+    const cs = getComputedStyle(bar), r = bar.getBoundingClientRect();
+    if (cs.display !== "none" && cs.visibility !== "hidden" && (cs.position === "fixed" || cs.position === "sticky") && r.height > 0 && r.bottom > 0) top = r.bottom;
+  }
+  const y = node.getBoundingClientRect().top + scrollY - top - 16;
+  scrollTo({ top: Math.max(0, y), behavior: reducedMotion() ? "auto" : "smooth" });
+}
+/** Moves keyboard focus to a heading after a rebuild (no outline for pointer users; :focus-visible styling in ntags.css). */
+export function focusHeading(h) {
+  if (!h) return;
+  h.tabIndex = -1;
+  h.classList.add("nt-focus-target");
+  h.focus({ preventScroll: true });
+}
+/** True on a computer (no touch-first browser), where wallets are browser extensions rather than apps. */
+export function isDesktop() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  if (navigator.userAgentData?.mobile) return false;
+  if (/Android|iPhone|iPad|iPod|Mobile|MiniPay|Opera Mini|Opera Mobi/i.test(ua)) return false;
+  if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return false; // iPadOS reports itself as a Mac
+  return true;
+}
+/**
+ * "No wallet found" help. On a phone: open this page in a wallet app's browser. On a computer: install the MetaMask
+ * extension, or scan a QR code of this page to open it on the phone. Links keep the #hash (e.g. #claim=ada).
+ */
+export function noWalletHelp({ action = "continue" } = {}) {
+  const page = location.href;
+  const copy = el("button", { class: "btn btn-secondary btn-sm", type: "button", dataset: { copy: page, copyLabel: "Page link copied" } }, icon("copy"), "Copy page link");
+  if (isDesktop()) {
+    const qr = el("div", { class: "nt-qr sm" });
+    renderQr(qr, page, "QR code of this page, to open it on your phone");
+    return alertBox("", "info",
+      el("p", {}, el("b", {}, "No wallet found in this browser."), ` To ${action} on this computer, install the MetaMask browser extension and reload this page. Or scan the code with your phone and open the page in MiniPay, MetaMask or another Celo wallet.`),
+      el("div", { class: "nt-nowallet mt-16" }, qr,
+        el("div", { class: "stack", style: "gap:10px" },
+          el("a", { class: "btn btn-secondary btn-sm", href: "https://metamask.io/download/", target: "_blank", rel: "noopener" }, icon("ext"), "Install the MetaMask browser extension"),
+          copy,
+          el("p", { class: "micro muted" }, "Scan with your phone's camera to open this page there."))));
+  }
+  return alertBox("", "info",
+    el("p", {}, el("b", {}, "No wallet found in this browser."), ` To ${action}, open this page in MiniPay, MetaMask or another Celo wallet's browser.`),
+    el("ol", { class: "small soft mt-8", style: "margin:8px 0 0;padding-left:18px;display:grid;gap:4px" },
+      el("li", {}, "Copy this page's link."),
+      el("li", {}, "Open your wallet app and go to its built-in browser."),
+      el("li", {}, "Paste the link there.")),
+    el("div", { class: "row mt-16" }, copy,
+      el("a", { class: "btn btn-secondary btn-sm", href: "https://metamask.app.link/dapp/" + page.replace(/^https?:\/\//, "") }, icon("ext"), "Open in MetaMask")));
+}
+/** The "no CELO for the network fee" warning, with a Get CELO link and an optional "… anyway" button. */
+export function noCeloAlert(onAnyway, anywayLabel = "Send anyway") {
+  const parts = [el("p", {}, el("b", {}, "This wallet has no CELO for the network fee. "),
+    "Most wallets need a few cents of CELO to send anything, even a free transaction. ",
+    el("a", { class: "link", href: "https://celo.org", target: "_blank", rel: "noopener" }, "Get CELO ", icon("ext")))];
+  if (onAnyway) {
+    const b = el("button", { class: "btn btn-secondary btn-sm", type: "button" }, anywayLabel);
+    b.addEventListener("click", onAnyway);
+    parts.push(el("p", { class: "small soft mt-8" }, "Some wallets, like MiniPay, pay the fee in dollars instead."), el("div", { class: "row mt-8" }, b));
+  }
+  return alertBox("warn", "alert", ...parts);
+}
+/** The wallet's CELO balance in wei, or null if it couldn't be read. */
+export async function celoBalance(address) {
+  try { return BigInt(await rpc("eth_getBalance", [address, "latest"])); } catch { return null; }
+}
+
+// ---------- find an nTag (landing, tag page) ----------
+/**
+ * Live search: type @ada, see who owns it (or that it's free), then "Pay @ada". Returns the element.
+ * opts: { id, label, value, address (the signed-in wallet, or a function returning it, for "that's you") }
+ */
+export function ntagFinder(opts = {}) {
+  const id = opts.id ?? "find-tag";
+  const input = el("input", {
+    id, type: "text", placeholder: "ada", autocomplete: "off", autocapitalize: "none", spellcheck: "false",
+    maxlength: "21", enterkeyhint: "go", "aria-describedby": `${id}-out`,
+  });
+  const out = el("div", { class: "nt-find-result", id: `${id}-out`, "aria-live": "polite" });
+  let timer = null, seq = 0, best = null;
+  const me = () => (typeof opts.address === "function" ? opts.address() : opts.address);
+  const hit = (cls, av, title, sub, action) => el("div", { class: `nt-hit ${cls}` }, av, el("div", { class: "nt-hit-text" }, el("b", {}, title), el("span", {}, sub)), action);
+  const run = async () => {
+    const my = ++seq;
+    const t = cleanTagInput(input.value);
+    best = null;
+    if (!t) { out.replaceChildren(); return; }
+    const err = ntagError(t);
+    if (err && !/reserved/.test(err)) { out.replaceChildren(el("p", { class: "small muted" }, `${cap(err)}.`)); return; }
+    out.replaceChildren(el("p", { class: "small muted", role: "status" }, `Looking up @${t}…`));
+    let state;
+    try { state = resolveNtags(await loadNtagOps()); } catch {
+      if (my !== seq) return;
+      const retry = el("button", { class: "btn btn-ghost btn-sm", type: "button" }, icon("refresh"), "Try again");
+      retry.addEventListener("click", run);
+      out.replaceChildren(el("div", { class: "row" }, el("p", { class: "small muted" }, "Couldn't reach the Celo explorer."), retry));
+      return;
+    }
+    if (my !== seq) return;
+    const entry = ownerOf(state, t);
+    const kind = ntagAvailability(state, t, me());
+    if (entry) {
+      const url = ntagUrl(t);
+      best = url;
+      const mine = Boolean(me()) && sameAddr(entry.owner, me());
+      out.replaceChildren(hit("owned", avatar(entry.owner), "@" + t, [entry.name ? nameText(entry.name) : null, entry.name ? " · " : null, short(entry.owner)],
+        el("a", { class: "btn btn-primary btn-sm", href: mine ? "account.html" : url }, mine ? "That's you" : `Pay @${t}`, icon("right"))));
+      return;
+    }
+    if (kind === "reserved") {
+      out.replaceChildren(hit("none", el("span", { class: "np-avatar" }, icon("lock")), "@" + t, "Reserved. Nobody can claim it.", null));
+      return;
+    }
+    const m = availabilityMessage(t, kind, { lock: state.locks.get(t) });
+    out.replaceChildren(hit(kind === "free" ? "free" : "none", el("span", { class: "np-avatar" }, icon(kind === "free" ? "check" : "lock")), "@" + t,
+      kind === "free" ? "Nobody has this tag yet." : m.text,
+      kind === "free" ? el("a", { class: "btn btn-secondary btn-sm", href: `account.html#claim=${t}` }, "Claim it") : null));
+  };
+  input.addEventListener("input", () => {
+    const clean = cleanTagInput(input.value);
+    if (clean !== input.value) {
+      const atEnd = input.selectionStart === input.value.length;
+      input.value = clean;
+      if (atEnd) input.setSelectionRange(clean.length, clean.length);
+    }
+    clearTimeout(timer);
+    timer = setTimeout(run, 250);
+  });
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter" && best) location.href = best; });
+  if (opts.value) { input.value = cleanTagInput(opts.value); setTimeout(run, 0); }
+  return el("div", { class: "nt-find", role: "search" },
+    el("label", { class: "nt-find-label", for: id }, icon("search"), opts.label ?? "Find an nTag"),
+    el("div", { class: "nt-taginput sm" }, el("span", { class: "nt-at", "aria-hidden": "true" }, "@"), input),
+    out);
+}

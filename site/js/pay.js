@@ -1,8 +1,10 @@
 import {
-  AGENT, CAP, TOKENS, CORRIDORS, EXPLORER_API, $, $$, el, icon, badge, naira, usd, num2, short,
-  lagosTime, lagosClock, celoscanTx, celoscanAddr, getJson, loadRate, parseRequest, initChrome,
+  AGENT, CAP, WALLET_DAILY_CAP, DAILY_CAP, TOKENS, CORRIDORS, EXPLORER_API, SEL, $, $$, el, icon, badge, naira, usd, num2, short,
+  lagosTime, lagosClock, celoscanTx, celoscanAddr, getJson, loadRate, parseRequest, initChrome, parseMoneyInput,
   loadTxByHash, decodeRegistration, registrationError, loadRegistrations, registrationStatuses, receiptNo,
+  rpc, readContract, loadReceipt, encodeCall, tagSuffix, markWalletConnected, walletDisconnected, isNetworkError,
 } from "../assets/core.js";
+import { ensureCelo, explainWalletError } from "../assets/session.js";
 
 initChrome();
 
@@ -43,6 +45,7 @@ addEventListener("hashchange", () => location.reload());
 
 if (!location.hash.slice(1)) {
   initBuilder();
+  initOpenLink();
 } else if (regHash !== null) {
   initRegistration(regHash.trim());
 } else {
@@ -99,9 +102,19 @@ async function initRegistration(hash) {
   $("#view-explainer").hidden = true;
   $("#view-loading").hidden = false;
 
+  // A brief network blip (or an RPC node a block behind a just-made link) shouldn't end in an error page:
+  // try 3 more times, 1 s, 2 s and 4 s apart, before giving up.
   let tx;
   try {
-    tx = await loadTxByHash(hash);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        tx = await loadTxByHash(hash);
+        if (tx || attempt >= 3) break;
+      } catch (e) {
+        if (attempt >= 3) throw e;
+      }
+      await new Promise((res) => setTimeout(res, 1000 * 2 ** attempt));
+    }
   } catch {
     showError("Couldn't reach the Celo network to read this link.", {
       title: "Couldn't load this link",
@@ -189,7 +202,7 @@ function initLink(req) {
     setText($("#l-id-label"), "Registration");
     $("#l-id").replaceChildren(el("a", { class: "link", href: celoscanTx(req.id), title: req.id }, short(req.id)));
     $("#l-safe-who").replaceChildren("The agent pays only ", el("b", { class: "mono" }, short(req.recipient)),
-      ", the wallet that registered this link, up to ", el("b", {}, `$${CAP} per payout`), ". Don't pay from that same wallet: the agent won't pay it.");
+      ", the wallet that registered this link, up to ", el("b", {}, `$${CAP} per payment`), ". Don't pay from that same wallet: the agent won't pay it.");
   }
   const regNote = el("div", { "aria-live": "polite" });
   $("#l-notice").append(regNote);
@@ -240,8 +253,11 @@ function initLink(req) {
     }
     if (usdValue !== null && usdValue > CAP) {
       $("#l-notice").append(el("div", { class: "alert warn mt-16" }, icon("alert"),
-        el("span", {}, `This is over the agent's $${CAP} per-payout limit, so autopilot won't pay it out. Ask for a smaller request before sending.`)));
+        el("span", {}, `This is over the agent's $${CAP} per-payment limit, so autopilot won't pay it out. Ask for a smaller request before sending.`)));
     }
+    // cNGN is valued in dollars at the rate (the reverse preview when published)
+    const usdOfNgn = (n) => (r.reverseRate ? n * r.reverseRate : n / r.rate);
+    renderRoom(usdValue ?? usdOfNgn(Number(req.amount)), usdOfNgn);
   }).catch(() => {
     setText($("#l-receive"), "—");
     setText($("#l-rate"), "Unavailable");
@@ -258,6 +274,8 @@ function initLink(req) {
   /** null while unknown; "active" for #r= links. "in-use" = an earlier link took this amount. */
   const regNow = () => (!isReg ? "active" : state.regs ? regStatusAt(Math.floor(Date.now() / 1000)) : null);
   const selfPaid = () => isReg && state.deposit && sameAddr(state.deposit.from, req.recipient);
+  /** Pay options show only while the link is open, unpaid and (for #tx= links) not taken by an earlier link. */
+  const canPayNow = () => !expired() && !state.deposit && regNow() === "active";
 
   function renderRegNote() {
     if (!isReg || state.deposit || expired()) return regNote.replaceChildren();
@@ -275,11 +293,13 @@ function initLink(req) {
     renderRegNote();
     const inUse = regNow() === "in-use";
     // pay options stay visible only while the link is open, unpaid and (for #tx= links) not taken by an earlier link
-    const canPay = !expired() && !state.deposit && regNow() === "active";
+    const canPay = canPayNow();
     $("#l-actions").hidden = !canPay;
     $("#l-manual").hidden = !canPay;
     $("#l-qr-card").hidden = !canPay;
     $("#l-amount-hint").hidden = !canPay;
+    $("#l-room").hidden = !canPay;
+    renderWallet();
 
     const expBadge = $("#l-exp-badge");
     if (state.deposit || inUse) expBadge.replaceChildren();
@@ -396,10 +416,234 @@ function initLink(req) {
     if (document.visibilityState === "visible" && !state.payout) { clearTimeout(timer); check(); }
   });
 
+  // ---------- today's room under the limits ----------
+  /**
+   * Shows how much more the recipient (#tx= links: the registering wallet) or the agent overall (#r= links: the
+   * contact's wallet isn't on the link) can be paid in the rolling 24 hours, from the agent's transfers on Blockscout,
+   * and warns when this payment would go over. A failure here only hides the line.
+   */
+  async function renderRoom(payUsd, usdOfNgn) {
+    const box = $("#l-room");
+    const valueOf = (t) => {
+      const v = Number(t.total?.value ?? 0) / 10 ** Number(t.total?.decimals ?? 6);
+      const tok = t.token?.address_hash ?? t.token?.address;
+      if (sameAddr(tok, TOKENS.USDT.address)) return v;
+      if (sameAddr(tok, TOKENS.cNGN.address)) return usdOfNgn(v);
+      return 0; // other tokens are never payouts
+    };
+    const since = Date.now() - 24 * 3600_000;
+    try {
+      let overall = 0;
+      for await (const t of transfers("from", null, since)) {
+        if (!sameAddr(t.from?.hash, AGENT) || sameAddr(t.to?.hash, AGENT) || t.method !== "transfer") continue;
+        overall += valueOf(t);
+      }
+      let person = null;
+      if (isReg) {
+        person = 0;
+        for await (const t of addressTransfers(req.recipient, "to", since)) if (sameAddr(t.from?.hash, AGENT)) person += valueOf(t);
+      }
+      const roomAll = Math.max(0, DAILY_CAP - overall);
+      const room = person === null ? roomAll : Math.max(0, Math.min(WALLET_DAILY_CAP - person, roomAll));
+      const fmt = (n) => { const v = Math.floor(n * 100) / 100; return Number.isInteger(v) ? `$${v}` : usd(v); };
+      const line = person === null
+        ? `The agent can pay out about ${fmt(room)} more today, across everyone.`
+        : `${req.name} can receive about ${fmt(room)} more today.`;
+      const kids = [el("p", { class: "hint mt-8" }, line, " Limits count the last 24 hours.")];
+      if (payUsd != null && payUsd > room + 0.005) {
+        const personOver = person !== null && payUsd > WALLET_DAILY_CAP - person + 0.005;
+        kids.push(el("div", { class: "alert warn mt-8" }, icon("alert"), el("span", {}, el("b", {}, `This payment (about ${fmt(payUsd)}) would go over today's limit. `),
+          personOver
+            ? `The agent refuses a payment that takes one person over $${WALLET_DAILY_CAP} in 24 hours, so it wouldn't be paid out. Wait until ${req.name}'s earlier payouts are more than a day old, or ask for a smaller link.`
+            : `The agent pays at most $${DAILY_CAP} in 24 hours across everyone, so this payout would wait until there's room. Consider paying later.`)));
+      }
+      box.replaceChildren(...kids);
+    } catch {
+      box.replaceChildren(); // the limits line above still applies; the agent checks them before paying
+    }
+  }
+
+  // ---------- pay from a connected wallet ----------
+  const eth = window.ethereum ?? null;
+  const PENDING_KEY = `np-linkpay:${req.id}`;
+  const W = { account: null, chainOk: null, bal: null, celo: null, busy: false, msg: null, sent: null };
+  const openBtn = $("#l-open");
+  if (eth) { openBtn.classList.replace("btn-primary", "btn-secondary"); }
+
+  const plain = (message) => Object.assign(new Error(message), { plain: true }); // our own explanation, shown as is
+  const setMsg = (kind, text) => { W.msg = text ? { kind, text } : null; renderWallet(); };
+  async function refreshBalances() {
+    const acct = W.account;
+    if (!acct) return;
+    try {
+      const [[b], c] = await Promise.all([readContract(sell.address, "0x70a08231", ["address"], [acct], ["uint256"]), rpc("eth_getBalance", [acct, "latest"])]);
+      if (acct !== W.account) return;
+      W.bal = b; W.celo = BigInt(c);
+    } catch { W.bal = null; W.celo = null; }
+    renderWallet();
+  }
+  function walletProblem() {
+    if (!W.account) return null;
+    if (sameAddr(W.account, AGENT)) return { kind: "err", text: "This is the agent's own wallet. Connect your own wallet to pay." };
+    if (isReg && sameAddr(W.account, req.recipient)) return { kind: "err", text: `This wallet created this link, so the agent won't pay it out. Pay from a different wallet.` };
+    if (W.bal !== null && W.bal < units) return { kind: "err", text: `This wallet has ${num2.format(Number(W.bal) / 1e6)} ${sell.symbol}, less than the ${sendText} this link asks for.` };
+    if (W.celo === 0n) return { kind: "warn", text: "This wallet has no CELO for the network fee. Add a few cents of CELO first, or your wallet may refuse to send." };
+    return null;
+  }
+  const txLink = (hash, label = "View on Celoscan") => el("a", { class: "link", href: celoscanTx(hash) }, label, " ", icon("ext"));
+
+  function renderWallet() {
+    const box = $("#l-wallet");
+    if (!box) return;
+    if (W.sent) return box.replaceChildren(trackView());
+    if (!eth || !canPayNow()) return box.replaceChildren();
+    const parts = [];
+    if (W.account) {
+      const balText = W.bal !== null ? `${num2.format(Number(W.bal) / 1e6)} ${sell.symbol}` : el("span", { class: "skel" });
+      parts.push(el("ul", { class: "kv-list" },
+        el("li", {}, el("span", {}, "Paying from"), el("a", { class: "mono link", href: celoscanAddr(W.account), title: W.account }, short(W.account))),
+        el("li", {}, el("span", {}, "Balance"), el("span", { class: "num" }, balText)),
+        el("li", {}, el("span", {}, "Network"), W.chainOk === false ? badge("Not Celo: switches when you pay", "warn") : el("span", {}, "Celo mainnet"))));
+    }
+    const problem = walletProblem();
+    if (problem) parts.push(el("div", { class: `alert ${problem.kind}` }, icon("alert"), el("span", {}, problem.text)));
+    if (W.msg) parts.push(el("div", { class: `alert ${W.msg.kind}`, role: W.msg.kind === "err" ? "alert" : null }, icon(W.msg.kind === "err" || W.msg.kind === "warn" ? "alert" : "info"), el("span", {}, W.msg.text)));
+    let btn;
+    if (!W.account) {
+      btn = el("button", { class: "btn btn-primary btn-lg", type: "button", disabled: W.busy }, icon("wallet"), W.busy ? "Check your wallet…" : "Connect wallet");
+      btn.addEventListener("click", connect);
+    } else {
+      btn = el("button", { class: "btn btn-primary btn-lg", type: "button", disabled: W.busy || problem?.kind === "err" }, W.busy ? "Check your wallet…" : `Pay ${sendText}`);
+      btn.addEventListener("click", submit);
+    }
+    parts.push(el("div", { class: "row" }, btn, W.account ? null : el("span", { class: "small muted" }, "Or use one of the options below.")));
+    box.replaceChildren(...parts);
+  }
+
+  async function setAccount(acct) {
+    W.account = acct ?? null;
+    W.bal = null; W.celo = null;
+    if (W.account) {
+      try { W.chainOk = String(await eth.request({ method: "eth_chainId" })).toLowerCase() === "0xa4ec"; } catch { W.chainOk = null; }
+    }
+    renderWallet();
+    refreshBalances();
+  }
+  async function connect() {
+    if (W.busy) return;
+    W.busy = true; W.msg = null;
+    renderWallet();
+    markWalletConnected();
+    try {
+      const accs = await eth.request({ method: "eth_requestAccounts" });
+      if (!accs?.length) throw new Error("The wallet returned no account.");
+      try { await ensureCelo(eth); W.chainOk = true; } catch (e) { W.msg = { kind: "warn", text: `Connected, but the wallet isn't on Celo. ${explainWalletError(e)}` }; }
+      W.busy = false;
+      await setAccount(accs[0]);
+    } catch (e) {
+      W.busy = false;
+      setMsg("err", explainWalletError(e));
+    }
+  }
+  async function submit() {
+    if (W.busy || !W.account || W.sent) return;
+    if (!canPayNow()) return renderWallet();
+    const from = W.account;
+    W.busy = true; W.msg = null;
+    renderWallet();
+    try {
+      if (isReg && sameAddr(from, req.recipient)) throw plain("This wallet created this link, so nothing was sent. Pay from a different wallet.");
+      if (sameAddr(from, AGENT)) throw plain("This is the agent's own wallet, so nothing was sent.");
+      await ensureCelo(eth);
+      W.chainOk = true;
+      const [[bal], celo] = await Promise.all([readContract(sell.address, "0x70a08231", ["address"], [from], ["uint256"]), rpc("eth_getBalance", [from, "latest"])]);
+      W.bal = bal; W.celo = BigInt(celo);
+      if (bal < units) throw plain(`This wallet has ${num2.format(Number(bal) / 1e6)} ${sell.symbol}, less than ${sendText}. Nothing was sent.`);
+      if (!canPayNow()) throw plain("This link can't be paid any more (it expired or was just paid). Nothing was sent.");
+      // transfer(agent, exact units) + this app's attribution suffix. No memo: a link payment is matched by its exact amount.
+      const data = encodeCall(SEL.transfer, ["address", "uint256"], [AGENT, units]) + tagSuffix();
+      const hash = await eth.request({ method: "eth_sendTransaction", params: [{ from, to: sell.address, value: "0x0", data }] });
+      if (!/^0x[0-9a-fA-F]{64}$/.test(String(hash))) throw plain("The wallet didn't return a transaction id. Check your wallet's activity before trying again.");
+      W.sent = { hash: String(hash).toLowerCase(), from, at: Date.now(), phase: "pending" };
+      try { sessionStorage.setItem(PENDING_KEY, JSON.stringify(W.sent)); } catch { /* storage blocked: tracking lasts while the page is open */ }
+      W.busy = false;
+      renderWallet();
+      track();
+    } catch (e) {
+      W.busy = false;
+      setMsg("err", e?.plain ? e.message : isNetworkError(e) ? "Couldn't reach Celo to check this wallet. Nothing was sent. Try again in a moment." : explainWalletError(e));
+    }
+  }
+
+  function trackView() {
+    const p = W.sent;
+    const row = (state, title, sub) => el("li", { class: state }, el("span", { "aria-hidden": "true" }, state === "done" ? icon("check") : state === "err" ? icon("x") : ""), el("div", {}, el("b", {}, title), sub ? el("span", { class: "small" }, sub) : null));
+    const chain = p.phase === "confirmed" ? row("done", "Confirmed on Celo", ["The agent pays ", req.name, " when autopilot next runs. The status on this page updates by itself."])
+      : p.phase === "failed" ? row("err", "The payment failed on Celo", ["Nothing was sent to the agent; only the network fee was spent. ", txLink(p.hash)])
+      : p.phase === "slow" ? row("", "Not confirmed yet", ["It can still go through. ", txLink(p.hash, "Check it on Celoscan")])
+      : row("active", "Waiting for Celo to confirm…", ["Usually a few seconds. ", txLink(p.hash)]);
+    const kids = [el("ol", { class: "pay-track" }, row("done", `Sent ${sendText} from your wallet`, [el("span", { class: "mono" }, short(p.from)), " · ", txLink(p.hash)]), chain)];
+    if (p.phase === "failed") {
+      const again = el("button", { class: "btn btn-secondary btn-sm", type: "button" }, icon("refresh"), "Try again");
+      again.addEventListener("click", () => { W.sent = null; try { sessionStorage.removeItem(PENDING_KEY); } catch { /* ignore */ } render(); });
+      kids.push(el("div", { class: "row" }, again));
+    } else if (p.phase !== "confirmed") {
+      kids.push(el("p", { class: "small muted" }, "Don't send it again while this is pending."));
+    }
+    return el("div", { class: "pay-wallet" }, ...kids);
+  }
+  async function track() {
+    const p = W.sent;
+    for (let i = 0; i < 72 && W.sent === p; i++) { // about 3 minutes
+      let rc = null;
+      try { rc = await loadReceipt(p.hash); } catch { /* RPC hiccup: try again */ }
+      if (rc) {
+        p.phase = rc.status === "0x1" ? "confirmed" : "failed";
+        try { if (p.phase === "failed") sessionStorage.removeItem(PENDING_KEY); else sessionStorage.setItem(PENDING_KEY, JSON.stringify(p)); } catch { /* ignore */ }
+        render();
+        if (p.phase === "confirmed") { clearTimeout(timer); check(); }
+        return;
+      }
+      await new Promise((res) => setTimeout(res, 2500));
+    }
+    if (W.sent === p) { p.phase = "slow"; render(); }
+  }
+
+  if (eth) {
+    // a payment sent from this tab earlier (the page was reloaded): keep tracking it for an hour
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(PENDING_KEY) ?? "null");
+      if (saved && /^0x[0-9a-f]{64}$/.test(saved.hash) && Date.now() - saved.at < 3600_000) {
+        W.sent = { ...saved, phase: saved.phase === "confirmed" ? "confirmed" : "pending" };
+        if (W.sent.phase === "pending") track();
+      }
+    } catch { /* storage blocked */ }
+    eth.on?.("accountsChanged", (accs) => { if (W.account || accs?.length) setAccount(walletDisconnected() ? null : accs?.[0]); });
+    // already connected to this site (and not disconnected in this tab): show the wallet without a prompt
+    if (!walletDisconnected()) eth.request({ method: "eth_accounts" }).then((accs) => { if (accs?.[0]) setAccount(accs[0]); }).catch(() => { /* stays "Connect wallet" */ });
+  }
+
   render();
   tickCountdown();
   setInterval(tickCountdown, 1000);
   check();
+}
+
+/** One address's ERC-20 transfers (newest first) in one direction since a time. */
+async function* addressTransfers(address, filter, sinceMs) {
+  let next = null;
+  for (let page = 0; page < 5; page++) {
+    const qs = new URLSearchParams({ type: "ERC-20", filter, ...(next ?? {}) });
+    const d = await getJson(`${EXPLORER_API}/addresses/${address}/token-transfers?${qs}`);
+    if (!Array.isArray(d.items)) throw new Error("unexpected explorer response");
+    for (const it of d.items) {
+      const ts = Date.parse(it.timestamp);
+      if (ts < sinceMs) return;
+      yield { ...it, ts };
+    }
+    next = d.next_page_params;
+    if (!next) return;
+  }
 }
 
 /** Walk the agent's ERC-20 transfers (newest first) in one direction since a time, for one token or (null) all. */
@@ -485,6 +729,37 @@ function renderQr(text) {
 }
 
 // =====================================================================
+// Explainer: open a link someone sent you (paste the URL, or just a registration tx hash)
+// =====================================================================
+function initOpenLink() {
+  const form = $("#open-form"), input = $("#open-link"), hint = $("#open-hint");
+  if (!form || !input) return;
+  const fail = (msg) => {
+    hint.classList.add("err");
+    setText(hint, msg);
+    input.setAttribute("aria-invalid", "true");
+    input.focus();
+  };
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = input.value.trim();
+    if (!v) return fail("Paste the payment link you were sent.");
+    let hash = "";
+    if (/^0x[0-9a-fA-F]{64}$/.test(v)) hash = "#tx=" + v;
+    else {
+      try { hash = new URL(v, location.href).hash; } catch { hash = v.startsWith("#") ? v : ""; }
+    }
+    if (!/^#(tx|r)=/.test(hash)) return fail("That doesn't look like a payment link. It should contain #tx= or #r=. Ask the sender to share it again.");
+    location.href = new URL("pay.html" + hash, location.href).href;
+  });
+  input.addEventListener("input", () => {
+    hint.classList.remove("err");
+    input.removeAttribute("aria-invalid");
+    setText(hint, "It starts with this site's address and contains #tx= or #r=.");
+  });
+}
+
+// =====================================================================
 // Explainer: command builder
 // =====================================================================
 function initBuilder() {
@@ -506,20 +781,21 @@ function initBuilder() {
   }
 
   function readAmount() {
-    const raw = amountIn.value.trim().replace(/[$₦,\s]/g, "");
+    // core.js parseMoneyInput: "1,5" is 1.50 and "1,250" is 1250, never a guess
+    const p = parseMoneyInput(amountIn.value);
     const inNgn = corridor === "cngn-usdt";
     let n = null, msg, err = true;
-    if (!raw) msg = inNgn ? "Enter an amount in naira." : "Enter an amount in dollars.";
-    else if (/\.\d{3,}$/.test(raw)) msg = "Use at most 2 decimal places.";
-    else if (!/^\d*\.?\d+$|^\d+\.$/.test(raw) || !(Number(raw) > 0)) msg = inNgn ? "Enter an amount in naira, like 7200." : "Enter an amount in dollars, like 5 or 12.50.";
+    if (!amountIn.value.trim()) msg = inNgn ? "Enter an amount in naira." : "Enter an amount in dollars.";
+    else if (p.error && !p.error.startsWith("Enter a number")) msg = p.error;
+    else if (p.error || !(p.cents > 0)) msg = inNgn ? "Enter an amount in naira, like 7200." : "Enter an amount in dollars, like 5 or 12.50.";
     else {
-      n = Number(raw);
+      n = p.cents / 100;
       const usdValue = inNgn ? (rate?.reverseRate ? n * rate.reverseRate : null) : n;
       if (!inNgn && n > MAX_USDT_BASE) {
         msg = `Leave room for the cents the agent adds: at most $${MAX_USDT_BASE}.`;
         n = null;
       } else if (usdValue !== null && usdValue > CAP) {
-        msg = inNgn ? `About ${usd(usdValue)}, over the $${CAP} per-payout limit. Autopilot would refuse it.` : `Over the $${CAP} per-payout limit. Autopilot would refuse it.`;
+        msg = inNgn ? `About ${usd(usdValue)}, over the $${CAP} per-payment limit. Autopilot would refuse it.` : `Over the $${CAP} per-payment limit. Autopilot would refuse it.`;
         n = null;
       } else {
         err = false;

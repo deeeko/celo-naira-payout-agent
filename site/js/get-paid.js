@@ -1,17 +1,21 @@
 import {
   AGENT, CAP, CORRIDORS, TOKENS, $, $$, el, icon, badge, naira, num2, short, lagosTime, celoscanTx, celoscanAddr,
-  rpc, loadRate, loadReceipt, loadRegistrations, registrationStatuses, encodeRegistration, initChrome,
+  rpc, loadRate, loadReceipt, loadRegistrations, registrationStatuses, encodeRegistration, initChrome, parseMoneyInput,
   disconnectWallet, walletDisconnected, markWalletConnected, DISCONNECT_NOTE_FULL, DISCONNECT_NOTE_PARTIAL, toast,
 } from "../assets/core.js";
+import { ensureCelo as ensureCeloOn, explainWalletError, CELO_CHAIN } from "../assets/session.js";
+import { isDesktop, noWalletHelp } from "../assets/ntag-ui.js";
 
 initChrome();
 
 // A recipient registers their own payment request onchain: a zero-value tx from their wallet to the agent whose
 // calldata is the request (see site/_spec/FEATURES2.md). The page never moves money; the wallet asks before sending.
 
-const CELO_CHAIN = "0xa4ec"; // 42220
+const explain = explainWalletError;
+const ensureCelo = () => ensureCeloOn(eth);
 const MIN_HOURS = 1, MAX_HOURS = 168, DEFAULT_HOURS = 48;
-const USDT_MIN_CENTS = 100, USDT_MAX_CENTS = 2499; // $1 to $24.99
+const USDT_MIN_CENTS = 100, USDT_MAX_CENTS = 2499; // $1 to $24.99: the agent's shared registration rule (registrationError)
+const NAIRA_RANGE = "$1 up to $24.99, so the payout stays under the $25 limit";
 const POLL_MS = 2500, POLL_TRIES = 72; // about 3 minutes
 
 const eth = window.ethereum ?? null;
@@ -43,12 +47,11 @@ function alertBox(kind, iconName, ...children) {
 const txLink = (hash) => el("a", { class: "link", href: celoscanTx(hash) }, "View on Celoscan ", icon("ext"));
 
 // ---------- form values ----------
-/** Amount in cents, or { error }. Accepts "1,250.5" style input; at most 2 decimals. */
+/** Amount in cents, or { error }. core.js parseMoneyInput reads "1,250.5" as 1250.50 and "1,5" as 1.50; at most 2 decimals. */
 function readAmount() {
-  const raw = amountIn.value.replace(/[,\s₦$]/g, "");
-  if (!raw) return { error: "Enter an amount." };
-  if (!/^\d+(\.\d{1,2})?$/.test(raw)) return { error: /\.\d{3,}$/.test(raw) ? "Use at most 2 decimals." : "Enter a number, like 10 or 10.50." };
-  const cents = Math.round(Number(raw) * 100);
+  const p = parseMoneyInput(amountIn.value);
+  if (p.error) return { error: p.error };
+  const cents = p.cents;
   const err = amountRuleError(cents);
   return err ? { cents, error: err } : { cents };
 }
@@ -56,7 +59,7 @@ function readAmount() {
 function amountRuleError(cents) {
   if (!(cents > 0)) return "Enter an amount above zero.";
   if (isNaira()) {
-    if (cents < USDT_MIN_CENTS || cents > USDT_MAX_CENTS) return "Enter $1 to $24.99.";
+    if (cents < USDT_MIN_CENTS || cents > USDT_MAX_CENTS) return `Enter ${NAIRA_RANGE}.`;
     return null;
   }
   const rr = state.rate?.reverseRate;
@@ -107,6 +110,15 @@ async function refreshRegs() {
   try {
     state.regs = await loadRegistrations();
     state.regsState = "ok";
+    // A newcomer shouldn't open the page on a warning: if the pre-filled amount is already taken and they haven't
+    // typed anything yet, start them on the nearest free amount instead.
+    if (!state.userTyped) {
+      const a = readAmount();
+      if (!a.error && isTaken(a.cents)) {
+        const alt = nearestFree(a.cents);
+        if (alt != null) { amountIn.value = centsStr(alt); renderAmountHint(); renderEstimate(); }
+      }
+    }
   } catch {
     state.regsState = "err";
   }
@@ -128,7 +140,7 @@ function renderAmountHint() {
   const show = a.error && (state.touched.has("amount") || amountIn.value.trim());
   hint.classList.toggle("err", !!show);
   if (show) setText(hint, a.error);
-  else setText(hint, isNaira() ? "$1 to $24.99, up to 2 decimals." : `Up to $${CAP} in value, up to 2 decimals.`);
+  else setText(hint, isNaira() ? `${NAIRA_RANGE[0].toUpperCase()}${NAIRA_RANGE.slice(1)}.` : `Up to $${CAP} in value, up to 2 decimals.`);
   amountIn.setAttribute("aria-invalid", String(!!show));
 }
 
@@ -220,6 +232,7 @@ function renderWallet() {
   const b = $("#wallet-badge");
   if (!eth) {
     b.replaceChildren(badge("No wallet", "neutral"));
+    if (isDesktop()) { walletBox.replaceChildren(noWalletHelp({ action: "create a link" })); return; }
     const page = location.href.split("#")[0];
     const mm = "https://metamask.app.link/dapp/" + page.replace(/^https?:\/\//, "");
     walletBox.replaceChildren(alertBox("", "info",
@@ -307,32 +320,6 @@ function update() {
 }
 
 // ---------- wallet ----------
-function explain(e) {
-  const m = String(e?.data?.message ?? e?.message ?? e ?? "");
-  if (e?.code === 4001 || /user (rejected|denied|cancel)|rejected by user|denied (transaction|request)|cancell?ed/i.test(m)) return "You cancelled in your wallet. Nothing was sent.";
-  if (/insufficient funds|exceeds balance|gas required exceeds/i.test(m)) return "This wallet doesn't have enough CELO for the network fee. Add a few cents of CELO and try again.";
-  if (e?.code === -32002) return "Your wallet already has a request open. Switch to it and finish or cancel that first.";
-  if (e?.code === 4100) return "The wallet hasn't given this page access. Connect again and approve the request.";
-  return `The wallet reported: ${m || "unknown error"}. Try again, and check the wallet is on Celo mainnet.`;
-}
-
-async function ensureCelo() {
-  const id = String(await eth.request({ method: "eth_chainId" })).toLowerCase();
-  if (id === CELO_CHAIN) return;
-  try {
-    await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: CELO_CHAIN }] });
-  } catch (e) {
-    const unknown = e?.code === 4902 || e?.data?.originalError?.code === 4902 || /unrecognized|not been added|unknown chain/i.test(String(e?.message));
-    if (!unknown) throw e;
-    await eth.request({ method: "wallet_addEthereumChain", params: [{
-      chainId: CELO_CHAIN, chainName: "Celo", nativeCurrency: { name: "CELO", symbol: "CELO", decimals: 18 },
-      rpcUrls: ["https://forno.celo.org"], blockExplorerUrls: ["https://celoscan.io"],
-    }] });
-  }
-  const now = String(await eth.request({ method: "eth_chainId" })).toLowerCase();
-  if (now !== CELO_CHAIN) throw new Error("The wallet is still on another network. Switch it to Celo and try again.");
-}
-
 async function checkGas() {
   if (!state.account) return;
   const acct = state.account;
@@ -525,7 +512,7 @@ for (const b of $$("#corridor button")) {
     update();
   });
 }
-amountIn.addEventListener("input", update);
+amountIn.addEventListener("input", () => { state.userTyped = true; update(); });
 amountIn.addEventListener("blur", () => { state.touched.add("amount"); update(); });
 nameIn.addEventListener("input", renderTextHints);
 nameIn.addEventListener("blur", () => { if (nameIn.value) state.touched.add("name"); renderTextHints(); });

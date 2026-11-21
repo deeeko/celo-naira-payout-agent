@@ -3,7 +3,7 @@ import {
   $, el, badge, icon, naira, usd, num2, short, lagos, lagosTime, celoscanTx, celoscanAddr,
   rpc, getJson, loadTxByHash, loadReceipt, decodeTransfers, decodeTag, loadTxPage, loadRegistrations,
   txKind, txLabel, txStatus, receiptNo, parseReceiptNo,
-  tokenSymbol, units6, encodeCall, tagSuffix, loadIdentity, copyText, toast, initChrome,
+  tokenSymbol, units6, encodeCall, tagSuffix, loadIdentity, copyText, toast, initChrome, isNetworkError,
 } from "../assets/core.js";
 import { disconnectWallet, markWalletConnected, DISCONNECT_NOTE_FULL, DISCONNECT_NOTE_PARTIAL, toast as toastMsg } from "../assets/core.js";
 
@@ -881,10 +881,20 @@ async function load() {
     else await openTx(route.hash, route, my);
   } catch (e) {
     if (my !== seq) return;
-    setHead("Receipt", "Receipt ", "unavailable", "The data behind this receipt couldn't be read just now.");
-    problem("err", "Couldn't load this receipt",
-      el("p", {}, `Could not reach Celo's RPC or Blockscout (${e?.message ?? e}). Check your connection and try again${route.hash ? ", or open the transaction on Celoscan" : ""}.`),
-      { hash: route.hash, retry: load });
+    // only a real network failure is blamed on the network; anything else is our problem, said plainly
+    if (isNetworkError(e)) {
+      setHead("Receipt", "Receipt ", "unavailable", "The data behind this receipt couldn't be read just now.");
+      problem("err", "Couldn't load this receipt",
+        el("p", {}, `Could not reach Celo's RPC or Blockscout (${e?.message ?? e}). Check your connection and try again${route.hash ? ", or open the transaction on Celoscan" : ""}.`),
+        { hash: route.hash, retry: load });
+    } else {
+      setHead("Receipt", "Receipt ", "unavailable", "Something went wrong showing this receipt.");
+      problem("err", "Something went wrong showing this receipt",
+        el("p", {}, route.hash
+          ? ["Try again, or check the transaction on ", el("a", { class: "link", href: celoscanTx(route.hash) }, "Celoscan"), "."]
+          : "Try again in a moment, or look the receipt up by its transaction hash."),
+        { hash: route.hash, retry: load });
+    }
   }
 }
 

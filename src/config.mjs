@@ -75,3 +75,5 @@ export const LOG_FILE = process.env.RECEIPTS_FILE ?? path.join(root, "receipts.j
 export const REQUESTS_FILE = process.env.REQUESTS_FILE ?? path.join(root, "requests.json");
 export const WATCH_STATE_FILE = process.env.WATCH_STATE_FILE ?? path.join(root, "watch-state.json");
 export const REGISTRATIONS_STATE_FILE = process.env.REGISTRATIONS_STATE_FILE ?? path.join(root, "registrations-state.json");
+// nTag payments autopilot has seen (deposits whose transfer memo names a tag), keyed by `${tx}:${logIndex}`.
+export const NTAG_PAYMENTS_FILE = process.env.NTAG_PAYMENTS_FILE ?? path.join(root, "ntag-payments.json");

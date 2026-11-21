@@ -46,6 +46,9 @@
   <symbol id="i-doc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3.5H7a1.5 1.5 0 0 0-1.5 1.5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3.5V8h4.5"/><path d="M9 12.5h6M9 16h6"/></symbol>
   <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M15.5 13.5h1.5"/></symbol>
   <symbol id="i-receipt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h12v17l-2.5-1.6-2 1.6-2-1.6-2 1.6-2-1.6L6 20.5z"/><path d="M9 8.5h6M9 12h6M9 15.5h3.5"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.8 20c1-3.6 3.8-5.6 7.2-5.6s6.2 2 7.2 5.6"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="m10 16-4-4 4-4"/><path d="M6 12h10"/></symbol>
+  <symbol id="i-updown" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m8 9 4-4 4 4"/><path d="m16 15-4 4-4-4"/></symbol>
 </svg>
 <div class="sky sky-sm" aria-hidden="true"></div>
 <aside class="sidebar" id="sidebar" aria-label="Site navigation">
@@ -55,25 +58,16 @@
     <button class="icon-btn sm sb-close" type="button" aria-label="Close menu"><svg class="i"><use href="#i-x"/></svg></button>
   </div>
   <nav class="sb-nav" aria-label="Sections">
-    <p class="sb-group">Product</p>
     <a href="index.html" data-label="Overview"><svg class="i"><use href="#i-home"/></svg><span class="sb-label">Overview</span></a>
-    <a href="quote.html" data-label="Quote"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Quote</span></a>
-    <a href="transactions.html" data-label="Transactions"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Transactions</span></a>
-    <a href="get-paid.html" data-label="Get paid"><svg class="i"><use href="#i-wallet"/></svg><span class="sb-label">Get paid</span></a>
-    <a href="pay.html" data-label="Payment links"><svg class="i"><use href="#i-link"/></svg><span class="sb-label">Payment links</span></a>
-    <a href="autopilot.html" data-label="Autopilot"><svg class="i"><use href="#i-bolt"/></svg><span class="sb-label">Autopilot</span></a>
-    <a href="receipt.html" data-label="Receipts"><svg class="i"><use href="#i-receipt"/></svg><span class="sb-label">Receipts</span></a>
-    <p class="sb-group">Trust</p>
-    <a href="agent.html" data-label="Agent"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
-    <a href="verify.html" data-label="Verify"><svg class="i"><use href="#i-shield"/></svg><span class="sb-label">Verify</span></a>
-    <p class="sb-group">Resources</p>
-    <a href="docs.html" data-label="Docs"><svg class="i"><use href="#i-book"/></svg><span class="sb-label">Docs</span></a>
-    <a href="privacy.html" data-label="Privacy"><svg class="i"><use href="#i-lock"/></svg><span class="sb-label">Privacy</span></a>
-    <a href="terms.html" data-label="Terms"><svg class="i"><use href="#i-doc"/></svg><span class="sb-label">Terms</span></a>
-    <a href="https://github.com/deeeko/celo-naira-payout-agent" data-label="GitHub"><svg class="i"><use href="#i-github"/></svg><span class="sb-label">GitHub</span><svg class="i ext"><use href="#i-ext"/></svg></a>
-    <a href="https://celoscan.io/address/0x8a695cf54CB44753c8b784EB36d266f748617a1e" data-label="Agent on Celoscan"><svg class="i"><use href="#i-scan"/></svg><span class="sb-label">Agent on Celoscan</span><svg class="i ext"><use href="#i-ext"/></svg></a>
+    <a href="quote.html" data-label="Send" data-also="pay.html tag.html"><svg class="i"><use href="#i-quote"/></svg><span class="sb-label">Send</span></a>
+    <a href="get-paid.html" data-label="Get paid" data-also="account.html"><svg class="i"><use href="#i-wallet"/></svg><span class="sb-label">Get paid</span></a>
+    <a href="transactions.html" data-label="Activity" data-also="receipt.html verify.html"><svg class="i"><use href="#i-list"/></svg><span class="sb-label">Activity</span></a>
+    <a href="agent.html" data-label="Agent" data-also="autopilot.html"><svg class="i"><use href="#i-id"/></svg><span class="sb-label">Agent</span></a>
+    <span class="sb-sep" aria-hidden="true"></span>
+    <a href="docs.html" data-label="Docs" data-also="privacy.html terms.html"><svg class="i"><use href="#i-book"/></svg><span class="sb-label">Docs</span></a>
   </nav>
   <div class="sb-foot">
+    <div class="sb-user" id="sb-user"><a class="sb-user-chip signed-out" href="account.html" data-label="Sign in" aria-label="Sign in with your wallet"><span class="np-avatar is-anon" aria-hidden="true"><svg class="i"><use href="#i-user"/></svg></span><span class="sb-user-text sb-label"><b>Sign in</b><span>With your wallet, free</span></span></a></div>
     <div class="sb-status" title="Celo mainnet">
       <span class="live-dot" aria-hidden="true"></span>
       <div><b>Celo mainnet · live</b><span class="sb-label" id="sb-rate" aria-live="polite">Loading rate…</span></div>
@@ -87,10 +81,11 @@
     <a class="nav-brand" href="index.html"><img src="logo.svg" alt="" width="30" height="30"><span>Naira Payout</span></a>
     <div class="nav-links">
       <a href="index.html">Overview</a>
-      <a href="quote.html">Quote</a>
-      <a href="transactions.html">Transactions</a>
+      <a href="quote.html" data-also="pay.html tag.html">Send</a>
+      <a href="get-paid.html" data-also="account.html">Get paid</a>
+      <a href="transactions.html" data-also="receipt.html verify.html">Activity</a>
     </div>
-    <a class="btn btn-secondary btn-sm" href="https://github.com/deeeko/celo-naira-payout-agent">GitHub</a>
+    <div class="nav-user" id="nav-user"><a class="nav-user-btn signed-out" href="account.html" aria-label="Sign in with your wallet"><svg class="i"><use href="#i-user"/></svg><span>Sign in</span></a></div>
     <button class="icon-btn menu-btn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="sidebar"><svg class="i"><use href="#i-menu"/></svg></button>
   </nav>
 </div>
@@ -99,16 +94,17 @@
     <span class="eyebrow">Terms</span>
     <h1 class="page-title">The <em>simple</em> rules</h1>
     <p class="lead">A quick read before you send money through a payment link. Using the site means you're cool with these.</p>
-    <p class="small muted mt-16">Updated 20 November 2026</p>
+    <p class="small muted mt-16">Updated 21 November 2026</p>
+    <nav class="subnav" aria-label="Docs pages"><a href="docs.html">Docs</a><a href="privacy.html">Privacy</a><a href="terms.html" aria-current="page">Terms</a></nav>
   </header>
 
   <section class="container" style="padding-bottom:72px">
     <div class="card"><div class="card-b prose">
       <h2 id="what">What this is</h2>
-      <p>A hackathon project, built in the open. An agent that turns dollars into naira (and back) on Celo, run by its maintainer (<a href="https://github.com/deeeko">deeeko</a>). It's <strong>not a bank</strong>, not a licensed money transmitter, and nothing here is financial advice. It's built for small amounts: $25 per payout, $100 a day.</p>
+      <p>A hackathon project, built in the open. An agent that turns dollars into naira (and back) on Celo, run by its maintainer (<a href="https://github.com/deeeko">deeeko</a>). It's <strong>not a bank</strong>, not a licensed money transmitter, and nothing here is financial advice. It's built for small amounts: $25 per payment, $25 per person per day and $100 per day overall.</p>
 
-      <h2 id="site">The website can't touch your money</h2>
-      <p>It only shows prices, the agent's identity and its public transactions. It will never ask for your private key or recovery phrase, and no one should. Rates shown are estimates; the agent gets a firm quote when it pays and stops if the price gets more than 3% worse.</p>
+      <h2 id="site">The website never holds your money</h2>
+      <p>It never holds money or keys. When you pay, the payment goes from your own wallet, only after you approve it there; the agent then converts it on Textile FX and pays the recipient. It will never ask for your private key or recovery phrase, and no one should. Rates shown are estimates; the agent gets a firm quote when it pays and stops if the price gets more than 3% worse.</p>
 
       <h2 id="links">Paying a link</h2>
       <ul>
@@ -134,11 +130,11 @@
     <div class="cols">
       <div>
         <div class="foot-brand"><img src="logo.svg" alt="" width="28" height="28">Naira Payout</div>
-        <p class="small soft" style="max-width:40ch">An agent that converts between USD₮ and cNGN on Textile FX and pays an approved recipient on Celo.</p>
+        <p class="small soft" style="max-width:40ch">An agent that converts between USD₮ and cNGN on Textile FX and pays recipients on Celo.</p>
       </div>
       <div>
         <h4>Product</h4>
-        <ul><li><a href="quote.html">Quote</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="get-paid.html">Get paid</a></li><li><a href="pay.html">Payment links</a></li><li><a href="autopilot.html">Autopilot</a></li><li><a href="receipt.html">Receipts</a></li><li><a href="agent.html">Agent</a></li><li><a href="verify.html">Verify a transaction</a></li></ul>
+        <ul><li><a href="quote.html">Send money</a></li><li><a href="pay.html">Pay a link</a></li><li><a href="get-paid.html">Get paid</a></li><li><a href="account.html">Your nTag</a></li><li><a href="transactions.html">Transactions</a></li><li><a href="receipt.html">Receipts</a></li><li><a href="verify.html">Verify a transaction</a></li><li><a href="agent.html">Agent</a></li><li><a href="autopilot.html">Autopilot</a></li></ul>
       </div>
       <div>
         <h4>Resources</h4>
