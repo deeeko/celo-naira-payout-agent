@@ -6,7 +6,7 @@ An agent on **Celo mainnet** that converts between **USD₮** and **cNGN** (Nige
 that the payer can rate onchain.
 Built for the *Agents Open for Business* hackathon, **Track 3: Stablecoin Corridors (Textile FX)**.
 
-**Live site:** https://deeeko.github.io/celo-naira-payout-agent/ — a live quote for both corridors, payment
+**Live site:** https://naira-payout.vercel.app/ (mirror: https://deeeko.github.io/celo-naira-payout-agent/) — a live quote for both corridors, payment
 links, autopilot activity and receipts rebuilt from chain data, the agent's ERC-8004 identity and reviews,
 its transactions with the attribution tag decoded from each one, and a tool to verify any Celo transaction's tag.
 
@@ -18,6 +18,16 @@ its transactions with the attribution tag decoded from each one, and a tool to v
 |---|---|---|---|---|
 | `usdt-cngn` (default) | USD₮ | cNGN | USD₮ | the USD₮ sold |
 | `cngn-usdt` | cNGN | USD₮ | naira (cNGN) | the USD₮ bought |
+| `celo-cngn` (`pay` and `quote` only) | CELO (from the agent wallet) | cNGN | CELO | the USD₮ bought by the first swap |
+
+**Pay in naira from CELO** (`celo-cngn`, `src/celo.mjs`). Textile has no CELO → cNGN pair, so this is **two swaps**
+and **two Textile fees**: CELO → USD₮, then exactly the USD₮ that arrived → cNGN, then the cNGN received is paid out.
+Each swap must clear Textile's minimum of about $1, so the first swap must preview at least 1.05 USD₮
+(about 20 CELO at today's rate). The agent wallet always keeps `MIN_CELO_RESERVE` (default 2) CELO plus a 0.1 CELO gas
+margin after selling, because CELO also pays its network fees. It is for direct owner payouts only: payment links,
+"Get paid" registrations and autopilot refuse it. If the second swap or the payout fails after the first swap went
+through, the agent stops and prints where the money is (for example "1.091835 USDT is in the agent wallet") and the exact
+command that finishes the job: `node src/agent.mjs pay --to NAME --amount X --corridor usdt-cngn --execute`.
 
 **One payout** (`pay`, `src/pay.mjs`), the same for both corridors:
 
@@ -29,7 +39,7 @@ its transactions with the attribution tag decoded from each one, and a tool to v
 
 **Payment links and autopilot** (`src/requests.mjs`, `src/watch.mjs`):
 
-1. `request --to ada --amount 5` adds a random 0.01–0.99 to the amount so it is unique among open requests (and within the per-payout cap), saves it in `requests.json` and prints the exact amount and a link: `https://deeeko.github.io/celo-naira-payout-agent/pay.html#r=<token>`. The link carries only the public fields (name, amount, corridor, created, expiry, optional note).
+1. `request --to ada --amount 5` adds a random 0.01–0.99 to the amount so it is unique among open requests (and within the per-payout cap), saves it in `requests.json` and prints the exact amount and a link: `https://naira-payout.vercel.app/pay.html#r=<token>`. The link carries only the public fields (name, amount, corridor, created, expiry, optional note).
 2. The payer opens the link and sends exactly that amount to the agent from any Celo wallet ("Open in wallet", QR code, or by hand).
 3. `watch --execute` reads ERC-20 Transfer events to the agent on USD₮ and cNGN (Forno `eth_getLogs`, at most 5000 blocks per query). A deposit matches an open request only if the token is the request's sell token, the value is the exact amount, and it arrived after the request was created and before it expired.
 4. On a match it first runs the checks that send nothing: the contact in `contacts.json` and the allow-list, both caps (including the 24 h cap) and a live preview. If one fails it logs `preflight_failed`, records nothing and stops before that deposit, so the request stays open and the same deposit matches again once the owner fixes the cause and restarts `watch --execute`.
@@ -37,7 +47,7 @@ its transactions with the attribution tag decoded from each one, and a tool to v
 6. If the payout itself then fails, the error is saved on the request and autopilot stops. `retry --request ID` re-runs that payout (a dry run unless `--execute`; `--execute` still asks you to type `yes` unless `--yes`). It refuses a request that is paid, has no recorded deposit or saved error, or already sent a swap or payout transaction.
 
 **Receipts and reviews:** every executed payout prints and logs
-`https://deeeko.github.io/celo-naira-payout-agent/receipt.html#p=<payout>&s=<swap>[&r=<request>]`. The receipt page rebuilds
+`https://naira-payout.vercel.app/receipt.html#p=<payout>&s=<swap>[&r=<request>]`. The receipt page rebuilds
 the payout, the swap, the effective rate and each transaction's tag from Celo in the browser. From it the payer can
 rate the payout 1–5 stars with a `giveFeedback` transaction to the ERC-8004 Reputation Registry, sent from **their own
 wallet**. The registry rejects ratings from the agent's owner or operators. The Agent page lists the ratings; "Verified
@@ -86,7 +96,7 @@ Owner requests (`requests.json`, `contacts.json`) work exactly as before.
 Every executed payout (`pay`, `watch`, `retry`) prints
 
 ```
-Receipt NP-7F3A-91C2: https://deeeko.github.io/celo-naira-payout-agent/receipt.html#NP-7F3A-91C2
+Receipt NP-7F3A-91C2: https://naira-payout.vercel.app/receipt.html#NP-7F3A-91C2
 ```
 
 The number is `NP-` plus the first 8 hex characters of the payout transaction hash, upper-case, so anyone can work
@@ -117,6 +127,12 @@ The full `receipt.html#p=<payout>&s=<swap>` link is printed and stored too.
 | Unmatched deposits are logged and never paid; the agent's own transfers (swap output) are ignored | `src/watch.mjs` |
 | Autopilot checks contact, caps and price before recording a deposit; a failure records nothing, so the request is not used up | `src/watch.mjs`, `src/pay.mjs` |
 | Autopilot stops on a payout error; the error is saved on the request and not retried automatically (the owner can run `retry`, which refuses once a swap or payout was sent) | `src/watch.mjs`, `src/agent.mjs` |
+| `celo-cngn`: the USD₮ bought by swap 1 counts against `MAX_USD` and `MAX_DAILY_USD`, checked on the preview, the firm quote and the USD₮ actually received | `src/celo.mjs` |
+| `celo-cngn`: refused below 1.05 USD₮ from swap 1 (Textile's ~$1 minimum per swap; about 20 CELO) | `src/guards.mjs`, `src/celo.mjs` |
+| `celo-cngn`: refused unless the agent keeps `MIN_CELO_RESERVE` CELO (default 2) after selling plus a 0.1 CELO gas margin; checked in the dry run, before confirming and on the firm quote | `src/guards.mjs`, `src/celo.mjs` |
+| `celo-cngn`: approves exactly what each firm quote needs (CELO on the GoldToken contract for swap 1, USD₮ for swap 2), resetting an old allowance first; each firm quote is checked against its own preview and never sent once expired | `src/celo.mjs` |
+| `celo-cngn`: swap 2 sells exactly the USD₮ measured from swap 1 (balance change, capped by swap 1's transfers to the agent); the payout is the cNGN measured from swap 2 | `src/celo.mjs` |
+| `celo-cngn`: a failure after swap 1 stops the run and prints where the funds are and the exact command to finish; every transaction sent (resets, approvals, both swaps, payout) is tag-checked, and any missing tag exits non-zero | `src/celo.mjs` |
 | Private key lives in a file outside the repo, is never printed, and is git-ignored | `src/chain.mjs` |
 
 The optional AI layer (`ask`) only returns a contact **name** and an **amount**. Code resolves the name to an
@@ -130,15 +146,17 @@ payer's own rating, from the payer's wallet.
 
 ```bash
 npm install
-npm test                                   # 21 unit tests: safety rules, tagging, links, matching, caps, retry
+npm test                                   # unit tests: safety rules, tagging, links, matching, caps, retry, celo-cngn
 
 node src/agent.mjs keygen                  # creates the agent wallet (key is never printed)
 node src/agent.mjs status                  # balances, tag, caps, USD paid in the last 24 h, open requests
 node src/agent.mjs quote --amount 10       # free live price, no wallet needed
 node src/agent.mjs quote --corridor cngn-usdt --amount 14400
+node src/agent.mjs quote --corridor celo-cngn --amount 20   # CELO -> USD₮ -> cNGN estimate (two previews)
 node src/agent.mjs pay --to ada --amount 10             # DRY RUN
 node src/agent.mjs ask "send $10 to ada"                # DRY RUN, plain language (usdt-cngn)
 node src/agent.mjs pay --to ada --amount 10 --execute   # real, asks for confirmation
+node src/agent.mjs pay --to ada --amount 20 --corridor celo-cngn   # DRY RUN: pay in naira from 20 CELO (two swaps)
 node src/agent.mjs request --to ada --amount 5          # payment link with a unique amount
 node src/agent.mjs requests                # list requests: open | received | paid | expired
 node src/agent.mjs watch                   # autopilot DRY RUN: prints what it would pay
@@ -152,8 +170,8 @@ node src/agent.mjs verify 0x<txhash>       # shows the attribution tag on-chain
 |---|---|
 | `keygen` | — |
 | `status` | — (needs the key file) |
-| `quote` | `--amount N` (default 10 USD₮ or ₦14,400), `--corridor ID` |
-| `pay` | `--to NAME --amount N`, `--corridor ID`, `--execute`, `--yes` |
+| `quote` | `--amount N` (default 10 USD₮, ₦14,400 or 20 CELO), `--corridor ID` |
+| `pay` | `--to NAME --amount N`, `--corridor ID` (incl. `celo-cngn`, amount in CELO, up to 6 decimals), `--execute`, `--yes` |
 | `ask "TEXT"` | `--execute`, `--yes` (always `usdt-cngn`) |
 | `request` | `--to NAME --amount N`, `--corridor ID`, `--note TEXT` (≤ 80 chars), `--hours H` (default 48, at most 168) |
 | `requests` | — |
@@ -162,7 +180,7 @@ node src/agent.mjs verify 0x<txhash>       # shows the attribution tag on-chain
 | `register` | `--repo URL`, `--execute` (needs the key file) |
 | `verify <hash>` | — (needs the key file) |
 
-`ID` is `usdt-cngn` (default) or `cngn-usdt`. `NAME` must be in `contacts.json` (case-insensitive).
+`ID` is `usdt-cngn` (default) or `cngn-usdt`; `pay` and `quote` also take `celo-cngn` (`request` refuses it). `NAME` must be in `contacts.json` (case-insensitive).
 Copy `contacts.example.json` to `contacts.json` and add the recipient (git-ignored).
 
 Autopilot needs a computer that keeps `watch --execute` running with the key file; it pays only while running.
@@ -177,10 +195,12 @@ again on the next run. A payout that fails after the deposit was recorded is fin
 |---|---|---|
 | `MAX_USD` | `25` | Largest single payout, in USD |
 | `MAX_DAILY_USD` | `100` | Most USD paid out in any rolling 24 h |
-| `MAX_SLIPPAGE_BPS` | `300` | Allowed gap between preview and firm quote (300 = 3%) |
+| `MAX_SLIPPAGE_BPS` | `300` | Allowed gap between preview and firm quote (300 = 3%), per swap |
+| `MIN_CELO_RESERVE` | `2` | CELO the agent wallet must still hold after a `celo-cngn` payout (it pays every network fee) |
+| `CELO_GAS_MARGIN` | `0.1` | CELO set aside for the gas of a `celo-cngn` payout (up to 7 transactions), on top of the reserve |
 | `ATTRIBUTION_CODE` | `celo_7360953d1b53` | Tag on every transaction (1–32 chars of a–z, 0–9, _) |
 | `AGENT_ADDRESS` | `0x8a695cf54CB44753c8b784EB36d266f748617a1e` | Agent address used when there is no key file (`request`, dry-run `watch`) |
-| `SITE_URL` | `https://deeeko.github.io/celo-naira-payout-agent` | Site used in payment and receipt links |
+| `SITE_URL` | `https://naira-payout.vercel.app` | Site used in payment and receipt links |
 | `CELO_AGENT_KEY_FILE` | `~/.celo-naira-agent/agent.json` | Agent private key, outside the repo |
 | `CONTACTS_FILE` | `contacts.json` (repo root) | Allow-list and `own_wallets` |
 | `RECEIPTS_FILE` | `receipts.jsonl` (repo root) | Executed payouts and unmatched deposits; the daily cap is counted from it |
@@ -196,7 +216,7 @@ again on the next run. A payout that fails after the deposit was recorded is fin
 ## How it follows the rules
 
 - **Celo mainnet only.** Chain 42220. Textile's sandbox does not cover Celo, so the swap path is checked with free live previews and unit tests, and the real run uses a small amount.
-- **No self-trading or arbitrage.** The agent makes one conversion per payout and is not a market maker.
+- **No self-trading or arbitrage.** The agent makes one conversion per payout (two for `celo-cngn`, because Textile has no direct CELO → cNGN pair) and is not a market maker.
 - **Independent users.** The payer and recipient are people outside the team whose wallets the builder did not fund (see *Status*).
 - **ERC-8004 identity.** `src/register8004.mjs` registers the agent and writes its id back into the registration file. Payers can rate payouts in the ERC-8004 Reputation Registry.
 - **Textile quotes without an API key.** A signed proof of wallet control (no funds moved) is sent only if Textile asks for it.
@@ -207,7 +227,8 @@ again on the next run. A payout that fails after the deposit was recorded is fin
 src/config.mjs        addresses, corridors, limits, tag, file paths
 src/guards.mjs        safety rules: amounts, caps (per payout and 24 h), allow-list, slippage (unit-tested)
 src/textile.mjs       Textile FX RFQ v2 client
-src/pay.mjs           the payout flow, both corridors
+src/pay.mjs           the payout flow, both stablecoin corridors
+src/celo.mjs          pay in naira from CELO: two swaps (CELO -> USDT -> cNGN), gas reserve, recovery message
 src/requests.mjs      payment requests: unique amounts, link encoding, deposit matching
 src/watch.mjs         autopilot: watches deposits and pays matched requests
 src/intent.mjs        plain-language request parser (optional AI)

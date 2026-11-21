@@ -23,7 +23,8 @@ export async function parseIntent(text, contactNames) {
       system:
         "You extract a payment request. Reply with ONLY compact JSON: " +
         '{"contact": <one of the allowed names, lowercase, or null>, "amount_usd": <decimal string or null>}. ' +
-        "Never invent names. If unsure, use null. Allowed names: " + JSON.stringify(contactNames),
+        "Never invent names. If unsure, use null. " +
+        "If the amount is not in US dollars (e.g. CELO, naira), return amount_usd null. Allowed names: " + JSON.stringify(contactNames),
       messages: [{ role: "user", content: String(text).slice(0, 500) }],
     }),
     signal: AbortSignal.timeout(30_000),

@@ -1,13 +1,90 @@
 // Safety rules. Pure functions, unit-tested. The AI layer can never bypass these.
 import { formatUnits, getAddress, isAddress, parseUnits, zeroAddress } from "viem";
-import { CORRIDORS, TOKENS } from "./config.mjs";
+import { CELO_TOKEN, CORRIDORS, DIRECT_CORRIDORS, TOKENS } from "./config.mjs";
 
-/** Resolves a corridor id ("usdt-cngn" default, "cngn-usdt") to its sell/buy tokens. */
+/**
+ * Resolves a payment-link corridor id ("usdt-cngn" default, "cngn-usdt") to its sell/buy tokens. Used by payment
+ * requests, "Get paid" registrations and the watch loop, so "celo-cngn" (direct payouts only) is refused here.
+ */
 export function getCorridor(id) {
   const key = String(id ?? "usdt-cngn").trim().toLowerCase();
+  if (DIRECT_CORRIDORS[key]) {
+    throw new Error(
+      `Corridor "${key}" is for direct payouts only (pay / quote). Payment links, "Get paid" and autopilot support: ` +
+      `${Object.keys(CORRIDORS).join(", ")}`,
+    );
+  }
   const c = CORRIDORS[key];
   if (!c) throw new Error(`Unknown corridor "${id}". Use one of: ${Object.keys(CORRIDORS).join(", ")}`);
   return { ...c, sellToken: TOKENS[c.sell], buyToken: TOKENS[c.buy] };
+}
+
+/** Any corridor the CLI's `pay` and `quote` accept: the payment-link corridors plus "celo-cngn". */
+export function getPayCorridor(id) {
+  const key = String(id ?? "usdt-cngn").trim().toLowerCase();
+  const d = DIRECT_CORRIDORS[key];
+  if (!d) {
+    if (CORRIDORS[key]) return getCorridor(key);
+    throw new Error(`Unknown corridor "${id}". Use one of: ${[...Object.keys(CORRIDORS), ...Object.keys(DIRECT_CORRIDORS)].join(", ")}`);
+  }
+  return { ...d, sellToken: CELO_TOKEN, viaToken: TOKENS[d.via], buyToken: TOKENS[d.buy] };
+}
+
+/** CELO amount: "20", "20.5", "1,000 CELO". At most 6 decimal places. Returns { str, units } (18-dp base units). */
+export function parseCeloAmount(input) {
+  const t = String(input ?? "").trim().replace(/\s*celo$/i, "").replace(/,/g, "");
+  if (!/^\d+(\.\d{1,6})?$/.test(t)) throw new Error(`Invalid CELO amount: "${input}" (a number with at most 6 decimal places)`);
+  const units = parseUnits(t, 18);
+  if (units === 0n) throw new Error("Amount must be greater than zero");
+  return { str: t, units };
+}
+
+/**
+ * Gas reserve for selling CELO (all 18-dp units): after selling `sellUnits` and setting aside `marginUnits` for gas,
+ * the wallet must still hold `reserveUnits`. Returns the CELO left; throws with the largest amount that would pass, or,
+ * when even that is below `minSellUnits` (the ~20 CELO a payout needs to clear Textile's ~$1 minimum), asks for a top-up.
+ * Every error it throws has `celoReserve: true`.
+ */
+export function assertCeloReserve(balanceUnits, sellUnits, reserveUnits, marginUnits, minSellUnits = parseUnits("20", 18)) {
+  const left = balanceUnits - sellUnits - marginUnits;
+  if (left < reserveUnits) {
+    const maxSell = balanceUnits - reserveUnits - marginUnits;
+    const f = (u) => formatUnits(u, 18);
+    if (maxSell < BigInt(minSellUnits)) {
+      throw Object.assign(new Error(
+        `The agent wallet holds ${f(balanceUnits)} CELO; a CELO payout needs about ${f(BigInt(minSellUnits))} CELO plus the ` +
+        `${f(reserveUnits)} CELO reserve and gas (~${f(BigInt(minSellUnits) + reserveUnits + marginUnits)} CELO). ` +
+        "Top up the agent wallet first. Nothing was sent.",
+      ), { celoReserve: true });
+    }
+    throw Object.assign(new Error(
+      `Selling ${formatUnits(sellUnits, 18)} CELO would leave ${formatUnits(left > 0n ? left : 0n, 18)} CELO after ~${formatUnits(marginUnits, 18)} CELO of gas, ` +
+      `below the gas reserve of ${formatUnits(reserveUnits, 18)} CELO (MIN_CELO_RESERVE). ` +
+      `Sell at most ${formatUnits(maxSell, 18)} CELO. Nothing was sent.`,
+    ), { celoReserve: true });
+  }
+  return left;
+}
+
+/** Leg 1 must buy at least `minUnits` USDT (6 dp), or Textile's ~$1-per-swap minimum fails one of the two swaps. */
+export function assertCeloMinimum(usdtUnits, minUnits) {
+  if (BigInt(usdtUnits) < BigInt(minUnits)) {
+    throw new Error(
+      `That much CELO is worth only ~${formatUnits(BigInt(usdtUnits), 6)} USDT, below Textile's ~$1 minimum per swap ` +
+      `(need at least ${formatUnits(BigInt(minUnits), 6)} USDT from the first swap); send at least ~20 CELO. Nothing was sent.`,
+    );
+  }
+}
+
+/**
+ * What a swap really delivered to the agent: the wallet's balance change of the token bought, never more than the swap's
+ * own Transfer events to the agent (so a deposit landing at the same moment is never counted). 0n if nothing arrived.
+ */
+export function measuredReceived(balanceDelta, transferredInSwap) {
+  const d = BigInt(balanceDelta);
+  const t = BigInt(transferredInSwap);
+  const r = d < t ? d : t;
+  return r > 0n ? r : 0n;
 }
 
 /** Amount in the corridor's sell token: "10", "$10", "₦14,400.50". At most 6 decimals. */

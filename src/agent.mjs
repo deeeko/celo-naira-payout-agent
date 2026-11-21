@@ -1,9 +1,12 @@
 #!/usr/bin/env node
-// CLI entry point. Corridors: usdt-cngn (default, pay in naira) and cngn-usdt (pay in dollars).
+// CLI entry point. Corridors: usdt-cngn (default, pay in naira), cngn-usdt (pay in dollars) and, for pay/quote only,
+// celo-cngn (pay in naira from CELO: two swaps, CELO -> USDT -> cNGN; amount in CELO).
 //   node src/agent.mjs keygen                                   create the agent wallet (key never printed)
 //   node src/agent.mjs status                                   balances, limits, today's total
 //   node src/agent.mjs quote --amount 10 [--corridor ID]        free indicative price, no wallet needed
+//   node src/agent.mjs quote --corridor celo-cngn --amount 20   CELO -> USDT -> cNGN estimate (two previews)
 //   node src/agent.mjs pay --to ada --amount 10 [--corridor ID] DRY RUN (add --execute for real money)
+//   node src/agent.mjs pay --to ada --amount 20 --corridor celo-cngn   pay in naira from 20 CELO (DRY RUN unless --execute)
 //   node src/agent.mjs ask "send $10 to ada"                    same, from plain language
 //   node src/agent.mjs request --to ada --amount 5 [--corridor ID] [--note TEXT] [--hours 48]
 //                                                               create a payment link with a unique amount
@@ -17,12 +20,14 @@
 import { erc20Abi, formatUnits, parseUnits } from "viem";
 import { verifyTx } from "@celo/attribution-tags";
 import {
-  AGENT_ADDRESS, ATTRIBUTION_CODE, DEFAULT_CORRIDOR, IDENTITY_REGISTRY, MAX_DAILY_USD, MAX_USD, MAX_WALLET_DAILY_USD, TOKENS,
+  AGENT_ADDRESS, ATTRIBUTION_CODE, CELO_MIN_USDT, DEFAULT_CORRIDOR, MAX_DAILY_USD, MAX_USD, MAX_WALLET_DAILY_USD,
+  MIN_CELO_RESERVE, TOKENS,
 } from "./config.mjs";
 import { keygen, loadAccount, makeClients } from "./chain.mjs";
-import { assertRecipient, dailyUsedUnits, getCorridor, parseAmount, resolveContact } from "./guards.mjs";
+import { assertRecipient, dailyUsedUnits, getCorridor, getPayCorridor, parseAmount, resolveContact } from "./guards.mjs";
+import { celoQuote, describeQuote } from "./celo.mjs";
 import { parseIntent } from "./intent.mjs";
-import { confirm, loadContacts, pay, preflight, readReceipts } from "./pay.mjs";
+import { BLOCKED_RECIPIENTS, confirm, loadContacts, pay, preflight, readReceipts } from "./pay.mjs";
 import { createRequest, loadRequests, receiptNoLink, requestLink, requestStatus, retryBlocker, saveRequests } from "./requests.mjs";
 import {
   discoverRegistrations, listStatus, loadRegState, MAX_REG_HOURS, registrationLink, registrationStatuses, saveRegState,
@@ -34,7 +39,8 @@ import { watch } from "./watch.mjs";
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (n) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
 const has = (n) => rest.includes(`--${n}`);
-const corridorFlag = () => getCorridor(flag("corridor") ?? DEFAULT_CORRIDOR);
+const corridorFlag = () => getCorridor(flag("corridor") ?? DEFAULT_CORRIDOR); // payment-link corridors only
+const payCorridorFlag = () => getPayCorridor(flag("corridor") ?? DEFAULT_CORRIDOR); // + celo-cngn (pay / quote)
 const agentAddress = () => loadAccount({ required: false })?.address ?? AGENT_ADDRESS;
 
 /** A request (owner link) or a "Get paid" registration record, for `retry`. Same fields: id, deposit, error, hashes ... */
@@ -72,12 +78,24 @@ async function main() {
       const open = loadRequests().filter((r) => requestStatus(r) === "open").length;
       console.log(`Agent: ${account.address}\nCELO: ${formatUnits(celo, 18)}  USDT: ${formatUnits(usdt, 6)}  cNGN: ${formatUnits(cngn, dec)}`);
       console.log(`Tag: ${ATTRIBUTION_CODE}  Per-payout cap: ${MAX_USD} USD  Daily cap: ${MAX_DAILY_USD} USD (used in last 24 h: ${used} USD)`);
+      console.log(`CELO gas reserve kept by celo-cngn payouts: ${MIN_CELO_RESERVE} CELO (MIN_CELO_RESERVE)`);
       console.log(`Per-wallet cap for "Get paid" payouts: ${MAX_WALLET_DAILY_USD} USD per rolling 24 h (MAX_WALLET_DAILY_USD)`);
       console.log(`Open payment requests: ${open}`);
       break;
     }
     case "quote": {
-      const c = corridorFlag();
+      const c = payCorridorFlag();
+      if (c.id === "celo-cngn") {
+        const q = await celoQuote(flag("amount") ?? "20");
+        console.log(`[${c.id}] ${describeQuote(q)}`);
+        if (q.belowMinimum) {
+          console.log(`  Too small: Textile needs about $1 per swap; swap 1 must buy at least ${CELO_MIN_USDT} USDT. Send at least ~20 CELO.`);
+        }
+        if (q.leg2Error) console.log(`  No USDT -> cNGN price for this size right now (${q.leg2Error}).`);
+        console.log(`  Real payouts keep at least ${MIN_CELO_RESERVE} CELO in the agent wallet for gas (MIN_CELO_RESERVE).`);
+        console.log(JSON.stringify({ leg1: q.pv1, leg2: q.pv2 }, null, 2));
+        break;
+      }
       const amount = parseAmount(flag("amount") ?? (c.sell === "USDT" ? "10" : "14400"));
       const pv = await preview(c.sellToken.address, c.buyToken.address, parseUnits(amount, 6).toString());
       if (pv.status === "preview") {
@@ -87,10 +105,13 @@ async function main() {
       break;
     }
     case "pay":
-      await pay({ to: flag("to"), amount: flag("amount"), corridor: corridorFlag().id, execute: has("execute"), yes: has("yes") });
+      await pay({ to: flag("to"), amount: flag("amount"), corridor: payCorridorFlag().id, execute: has("execute"), yes: has("yes") });
       break;
     case "ask": {
       const text = rest.filter((a) => !a.startsWith("--")).join(" ");
+      if (/\bcelo\b/i.test(text)) {
+        throw new Error("ask pays in USD only. For CELO use: node src/agent.mjs pay --to NAME --amount N --corridor celo-cngn");
+      }
       const { contacts } = loadContacts();
       const intent = await parseIntent(text, [...contacts.keys()]);
       console.log(`Understood: pay ${intent.amount} USD to "${intent.to}"`);
@@ -105,7 +126,7 @@ async function main() {
       const recipient = assertRecipient(resolveContact(name, contacts), {
         agent: loadAccount({ required: false })?.address ?? AGENT_ADDRESS,
         own,
-        blocked: [TOKENS.USDT.address, TOKENS.CNGN.address, IDENTITY_REGISTRY],
+        blocked: BLOCKED_RECIPIENTS,
       });
       const existing = loadRequests();
       // Avoid the amounts of active "Get paid" registrations in this corridor: a deposit matching both is never paid.

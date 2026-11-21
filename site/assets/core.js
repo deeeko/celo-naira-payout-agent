@@ -357,11 +357,14 @@ export async function loadTxByHash(hash) {
 // ---------- transaction meaning ----------
 /** "identity" | "approve" | "convert" | "payout" | "other" */
 const isStable = (addr) => [TOKENS.USDT.address, TOKENS.cNGN.address].some((a) => a.toLowerCase() === addr);
+// CELO (ERC-20 at the CELO token address) is sold by celo-cngn payouts: label its approvals and swaps, never as a payout.
+const CELO_ADDR = "0x471EcE3750Da237f93B8E339c536989b8978a438".toLowerCase();
+const labelSymbol = (addr) => (addr?.toLowerCase() === CELO_ADDR ? "CELO" : tokenSymbol(addr));
 export function txKind(tx) {
   const to = tx.to?.hash?.toLowerCase();
   if (to === REGISTRY.toLowerCase()) return "identity";
   if (isStable(to) && tx.method === "transfer") return "payout"; // either corridor: cNGN or USD₮ paid out
-  if (isStable(to) && tx.method === "approve") return "approve";
+  if ((isStable(to) || to === CELO_ADDR) && tx.method === "approve") return "approve";
   if (tx.token_transfers || /execute/i.test(tx.method ?? "")) return "convert";
   return "other";
 }
@@ -370,12 +373,12 @@ function swapDirection(tx) {
   const tt = Array.isArray(tx.token_transfers) ? tx.token_transfers : [];
   const sold = tt.find((t) => t.from?.hash?.toLowerCase() === AGENT.toLowerCase());
   const got = tt.find((t) => t.to?.hash?.toLowerCase() === AGENT.toLowerCase());
-  const s = sold && tokenSymbol(sold.token?.address_hash ?? sold.token?.address);
-  const g = got && tokenSymbol(got.token?.address_hash ?? got.token?.address);
+  const s = sold && labelSymbol(sold.token?.address_hash ?? sold.token?.address);
+  const g = got && labelSymbol(got.token?.address_hash ?? got.token?.address);
   return s && g && s !== "token" && g !== "token" ? `${s} → ${g}` : null;
 }
 export function txLabel(tx) {
-  const sym = tokenSymbol(tx.to?.hash);
+  const sym = labelSymbol(tx.to?.hash);
   switch (txKind(tx)) {
     case "identity": return tx.method === "register" ? "Registered identity" : tx.method === "setAgentURI" ? "Updated identity file" : "Updated identity";
     case "payout": return `Paid ${sym} to recipient`;

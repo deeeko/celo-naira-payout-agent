@@ -1,3 +1,4 @@
+import { SITE_URL } from "../src/config.mjs";
 // Corridors, payment requests, deposit matching, daily cap and watch helpers. No network.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -98,15 +99,15 @@ test("request links: Node encoding is identical to core.js and parses with core.
   assert.deepEqual(Object.keys(pub), ["v", "id", "name", "amount", "dir", "created", "exp", "note"]);
   assert.equal(nodeEncode(pub), siteEncode(pub));
   const link = requestLink(r);
-  assert.match(link, /^https:\/\/deeeko\.github\.io\/celo-naira-payout-agent\/pay\.html#r=[A-Za-z0-9_-]+$/);
+  assert.ok(link.startsWith(`${SITE_URL}/pay.html#r=`) && /#r=[A-Za-z0-9_-]+$/.test(link), link);
   assert.deepEqual(parseRequest(link.split("#r=")[1]), pub);
   const noNote = createRequest({ name: "Ada", amount: "5", now: T0 });
   assert.equal("note" in parseRequest(requestLink(noNote).split("#r=")[1]), false);
   assert.equal(
     receiptLink({ payout: "0xp", swap: "0xs", requestId: "r_abc12345" }),
-    "https://deeeko.github.io/celo-naira-payout-agent/receipt.html#p=0xp&s=0xs&r=r_abc12345",
+    `${SITE_URL}/receipt.html#p=0xp&s=0xs&r=r_abc12345`,
   );
-  assert.equal(receiptLink({ payout: "0xp" }), "https://deeeko.github.io/celo-naira-payout-agent/receipt.html#p=0xp");
+  assert.equal(receiptLink({ payout: "0xp" }), `${SITE_URL}/receipt.html#p=0xp`);
 });
 
 test("deposit matching: token, exact amount, time window, expiry, already paid / received", () => {

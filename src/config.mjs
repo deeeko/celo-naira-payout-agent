@@ -22,6 +22,21 @@ export const CORRIDORS = {
 };
 export const DEFAULT_CORRIDOR = "usdt-cngn";
 
+// CELO on Celo mainnet (GoldToken: native CELO with an ERC-20 interface, 18 decimals). Only the agent's own `pay`/`quote`
+// can sell it; it is NOT in TOKENS, so payment links, "Get paid" registrations and the watch loop never see it.
+export const CELO_TOKEN = { symbol: "CELO", address: "0x471EcE3750Da237f93B8E339c536989b8978a438", decimals: 18 };
+// "Pay in naira from CELO": two Textile swaps (CELO -> USDT, then USDT -> cNGN) and a cNGN payout. Direct payouts only.
+// There is no direct CELO -> cNGN pair on Textile. The USD value for the caps is the USDT bought in leg 1.
+export const DIRECT_CORRIDORS = {
+  "celo-cngn": { id: "celo-cngn", sell: "CELO", via: "USDT", buy: "CNGN", usd: "leg1", blurb: "pay someone in naira from CELO (two swaps)" },
+};
+// Textile's minimum is about $1 notional per swap. Leg 1 must preview at least this much USDT, so leg 2 also clears it.
+export const CELO_MIN_USDT = "1.05";
+// CELO the agent wallet must still hold AFTER a celo-cngn payout (it pays every network fee in CELO).
+export const MIN_CELO_RESERVE = process.env.MIN_CELO_RESERVE ?? "2";
+// Set aside for the gas of up to 7 transactions (2 resets, 2 approvals, 2 swaps, 1 payout) in a celo-cngn payout.
+export const CELO_GAS_MARGIN = process.env.CELO_GAS_MARGIN ?? "0.1";
+
 // ERC-8004 Identity Registry on Celo mainnet (docs.celo.org/build/agents/8004).
 export const IDENTITY_REGISTRY = "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432";
 // ERC-8004 Reputation Registry (proxy) on Celo mainnet. Never a payout recipient.
@@ -50,7 +65,7 @@ export const EXPLORER_API = (process.env.BLOCKSCOUT_API ?? "https://celo.blocksc
 export const MAX_SLIPPAGE_BPS = Number(process.env.MAX_SLIPPAGE_BPS ?? 300);
 
 // Public site that renders payment links and receipts.
-export const SITE_URL = (process.env.SITE_URL ?? "https://deeeko.github.io/celo-naira-payout-agent").replace(/\/+$/, "");
+export const SITE_URL = (process.env.SITE_URL ?? "https://naira-payout.vercel.app").replace(/\/+$/, "");
 
 const root = path.join(import.meta.dirname, "..");
 export const KEY_FILE =

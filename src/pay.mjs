@@ -8,13 +8,13 @@ import readline from "node:readline/promises";
 import { erc20Abi, formatUnits, parseEventLogs, parseUnits } from "viem";
 import { verifyTx } from "@celo/attribution-tags";
 import {
-  AGENT_ADDRESS, ATTRIBUTION_CODE, CONTACTS_FILE, IDENTITY_REGISTRY, LOG_FILE, MAX_DAILY_USD, MAX_SLIPPAGE_BPS, MAX_USD,
+  AGENT_ADDRESS, ATTRIBUTION_CODE, CELO_TOKEN, CONTACTS_FILE, IDENTITY_REGISTRY, LOG_FILE, MAX_DAILY_USD, MAX_SLIPPAGE_BPS, MAX_USD,
   MAX_WALLET_DAILY_USD, REPUTATION_REGISTRY, TOKENS,
 } from "./config.mjs";
 import { loadAccount, makeClients } from "./chain.mjs";
 import {
   assertDailyCap, assertNotSelfPayment, assertRecipient, assertSlippage, assertWalletCap, assertWithinCap, dailyUsedUnits,
-  getCorridor, parseAmount, parseContacts, refusal, resolveContact, walletUsedUnits,
+  getCorridor, measuredReceived, parseAmount, parseContacts, refusal, resolveContact, walletUsedUnits,
 } from "./guards.mjs";
 import { receiptLink, receiptNo, receiptNoLink } from "./requests.mjs";
 import { firmQuote, preview, submit } from "./textile.mjs";
@@ -44,22 +44,30 @@ export async function confirm(question) {
 }
 
 const fmt = (units) => formatUnits(units, 6);
-const balanceOf = (pub, token, owner) =>
+export const balanceOf = (pub, token, owner) =>
   pub.readContract({ address: token, abi: erc20Abi, functionName: "balanceOf", args: [owner] });
+
+/** Sum of the ERC-20 Transfer events of `token` to `owner` in a transaction's logs. */
+export const transfersTo = (logs, token, owner) =>
+  parseEventLogs({ abi: erc20Abi, eventName: "Transfer", logs })
+    .filter((l) => l.address.toLowerCase() === token.toLowerCase() && l.args.to.toLowerCase() === owner.toLowerCase())
+    .reduce((sum, l) => sum + l.args.value, 0n);
 
 /**
  * USD value (6-dp units) used for the caps: USDT sold (usdt-cngn) or USDT bought (cngn-usdt).
  * `wallet` (registrations only): also enforce the per-recipient-wallet rolling 24 h cap.
  */
-function checkCaps(usdUnits, wallet) {
+export function checkCaps(usdUnits, wallet) {
   assertWithinCap(fmt(usdUnits), MAX_USD);
   const entries = readReceipts();
   assertDailyCap(dailyUsedUnits(entries), usdUnits, MAX_DAILY_USD);
   if (wallet) assertWalletCap(walletUsedUnits(entries, wallet), usdUnits, MAX_WALLET_DAILY_USD);
 }
 
-/** Contracts that are never a payout recipient. */
-export const BLOCKED_RECIPIENTS = [TOKENS.USDT.address, TOKENS.CNGN.address, IDENTITY_REGISTRY, REPUTATION_REGISTRY];
+/** Contracts that are never a payout recipient: the token contracts (USDT, cNGN, CELO) and the ERC-8004 registries. */
+export const BLOCKED_RECIPIENTS = [
+  TOKENS.USDT.address, TOKENS.CNGN.address, CELO_TOKEN.address, IDENTITY_REGISTRY, REPUTATION_REGISTRY,
+];
 
 /**
  * Recipient checks for a "Get paid" registration (a raw wallet address, not a contact): not the agent, not one of the
@@ -101,7 +109,7 @@ export async function preflight({ to, amount, corridor = "usdt-cngn", agent, rec
   const recipient = assertRecipient(resolveContact(to, contacts), {
     agent,
     own,
-    blocked: [TOKENS.USDT.address, TOKENS.CNGN.address, IDENTITY_REGISTRY],
+    blocked: BLOCKED_RECIPIENTS,
   });
   const pv = await preview(c.sellToken.address, c.buyToken.address, sellAmount.toString());
   if (pv.status !== "preview") throw new Error(`No indicative price right now (${pv.status}).`);
@@ -145,6 +153,12 @@ export function registrationCaps(usdUnits, wallet) {
  * registration's sender, `payer` the deposit's sender, `to` only a display name, `registrationId` the registration hash.
  */
 export async function pay({ to, amount, corridor = "usdt-cngn", execute = false, yes = false, requestId, recipientAddress, payer, registrationId } = {}) {
+  if (String(corridor).trim().toLowerCase() === "celo-cngn") {
+    // Direct owner payouts only: never from a payment request or a "Get paid" registration.
+    if (requestId != null || recipientAddress != null) getCorridor("celo-cngn"); // throws the "direct payouts only" message
+    const { payFromCelo } = await import("./celo.mjs");
+    return payFromCelo({ to, amount, execute, yes });
+  }
   const account = loadAccount({ required: execute });
   const agent = account?.address ?? (recipientAddress != null ? AGENT_ADDRESS : undefined);
   const { c, amountStr, sellAmount, recipient, pv, wallet: capWallet } = await preflight({ to, amount, corridor, agent, recipientAddress, payer });
@@ -229,10 +243,7 @@ export async function pay({ to, amount, corridor = "usdt-cngn", execute = false,
     //    the swap's own Transfer events to the agent (so a deposit landing at the same moment is never paid on).
     const buyAfter = await balanceOf(pub, buy.address, account.address);
     const delta = buyAfter - buyBefore;
-    const inSwap = parseEventLogs({ abi: erc20Abi, eventName: "Transfer", logs: sr.logs })
-      .filter((l) => l.address.toLowerCase() === buy.address.toLowerCase() && l.args.to.toLowerCase() === account.address.toLowerCase())
-      .reduce((sum, l) => sum + l.args.value, 0n);
-    const received = delta < inSwap ? delta : inSwap;
+    const received = measuredReceived(delta, transfersTo(sr.logs, buy.address, account.address));
     if (received <= 0n) throw new Error(`Swap succeeded but no ${buy.symbol} was received. Check ${hashes.swap}.`);
     if (c.usd === "buy") assertWithinCap(fmt(received), MAX_USD); // never pay out more dollars than the cap
     if (c.usd === "buy" && capWallet) checkCaps(received, capWallet); // nor more than the wallet's 24 h allowance

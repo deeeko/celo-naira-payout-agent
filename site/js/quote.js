@@ -1,4 +1,4 @@
-import { CAP, CORRIDORS, $, $$, el, icon, badge, naira, usd, loadRate, initChrome } from "../assets/core.js";
+import { CAP, HAS_API, $, $$, el, icon, badge, naira, usd, getJson, loadRate, initChrome } from "../assets/core.js";
 
 initChrome();
 
@@ -24,7 +24,7 @@ const NAME_RE = /^[a-z][a-z0-9_.-]{0,31}$/;
 const RECIPIENT_HINT = "The name as it appears in your contacts.json.";
 const nairaWhole = new Intl.NumberFormat("en-NG", { maximumFractionDigits: 0 });
 
-/** What changes between the two corridors (ids match core.js CORRIDORS). */
+/** What changes between the corridors (ids match the agent's --corridor values). */
 const VIEW = {
   "usdt-cngn": {
     sendToken: "USD₮", getToken: "cNGN", presets: [5, 10, 20, 25], start: 10,
@@ -47,14 +47,39 @@ const VIEW = {
     emptyHint: "Enter an amount in naira.",
     badHint: "Enter an amount in naira, like 10000 or 12500.50.",
   },
+  "celo-cngn": {
+    sendToken: "CELO", getToken: "cNGN", presets: [20, 50, 100, 250], start: 50,
+    presetLabel: (v) => String(v),
+    presetAria: (v) => `${v} CELO`,
+    corridorHint: "The agent sells CELO for USD₮, then USD₮ for cNGN (naira). Two swaps, two Textile fees.",
+    receiveLabel: "Recipient gets in cNGN (approx.)",
+    route: "CELO → USD₮ → cNGN on Textile FX (two swaps)",
+    delivered: "cNGN on Celo, redeemable for naira",
+    emptyHint: "Enter an amount in CELO.",
+    badHint: "Enter an amount in CELO, like 50 or 120.5.",
+  },
 };
+/** Textile needs about $1 notional per swap; below this the first or second swap is refused. */
+const MIN_SWAP_USD = 1.05;
+/** CELO the agent keeps for gas and never sells (MIN_CELO_RESERVE, default 2). */
+const GAS_RESERVE_CELO = 2;
+const LINK_NOTE_CELO = "CELO payment links aren't supported. Payouts from CELO are run by the owner with pay.";
 
 let quote = null; // result of loadRate(), or null while loading / on failure
+let celo = null; // { celoUsdRate, celoPreviewCelo } from rate.json or /api/rate, or null if not published
 let rateFailed = false;
 let mode = "dry";
 let corridor = "usdt-cngn";
 
 const isReverse = () => corridor === "cngn-usdt";
+const isCelo = () => corridor === "celo-cngn";
+/** USD₮ received per 1 CELO (Textile fee included), or null when not published. */
+const celoRate = () => (celo ? celo.celoUsdRate : null);
+/** Smallest CELO amount that clears Textile's ~$1 minimum on both swaps (20 CELO when the rate is unknown). */
+const minCelo = () => (celoRate() ? Math.max(1, Math.ceil(MIN_SWAP_USD / celoRate())) : 20);
+const celoFmt = new Intl.NumberFormat("en-NG", { maximumFractionDigits: 2 });
+const fmtCelo = (n) => `${celoFmt.format(n)} CELO`;
+const usd4 = (n) => "$" + n.toFixed(4);
 /** USD₮ received per 1 NGN, or null when rate.json doesn't carry it yet. */
 const reverseRate = () => quote?.reverseRate ?? null;
 
@@ -76,6 +101,7 @@ const cliAmount = (n) => String(Math.round(n * 100) / 100);
 /** USD value used for the cap: dollars sold (naira mode) or USD₮ bought (dollars mode). null if unknown. */
 function usdValue(n) {
   if (n === null) return null;
+  if (isCelo()) return celoRate() ? n * celoRate() : null;
   if (!isReverse()) return n;
   const rr = reverseRate();
   return rr ? n * rr : null;
@@ -98,14 +124,23 @@ function renderCorridor() {
   setText($("#receive-label"), v.receiveLabel);
   setText($("#kv-route"), v.route);
   setText($("#kv-delivered"), v.delivered);
-  setText($("#check-token"), v.sendToken);
-  setText($("#check-cap"), isReverse()
+  setText($("#check-wallet"), isCelo()
+    ? el("span", {}, "The agent wallet holds the ", el("b", {}, "CELO"), " to sell, about 0.1 CELO for this payout's gas, and ", el("b", {}, `${GAS_RESERVE_CELO} CELO`), " more that it always keeps.")
+    : el("span", {}, "The agent wallet holds the ", el("b", {}, v.sendToken), " and a little ", el("b", {}, "CELO"), " for gas."));
+  setText($("#check-cap"), isCelo()
+    ? el("span", {}, "The CELO is worth ", el("b", {}, `$${CAP} or less`), " in USD₮, and at least about ", el("b", {}, "$1.10"), ".")
+    : isReverse()
     ? el("span", {}, "The amount is worth ", el("b", {}, `$${CAP} or less`), " in USD₮.")
     : el("span", {}, "The amount is ", el("b", {}, `$${CAP} or less`), "."));
+  for (const id of ["#kv-leg1-row", "#kv-leg2-row", "#kv-min-row"]) $(id).hidden = !isCelo();
   // plain-language commands take dollar amounts only (.field sets display, so [hidden] alone isn't enough)
   const askField = $("#ask-field");
-  askField.hidden = isReverse();
-  askField.style.display = isReverse() ? "none" : "";
+  const noAsk = isReverse() || isCelo();
+  askField.hidden = noAsk;
+  askField.style.display = noAsk ? "none" : "";
+  // CELO payouts are owner-only: no payment link to build
+  $("#req-code").style.display = isCelo() ? "none" : "";
+  $("#req-note").style.display = isCelo() ? "none" : "";
   renderPresets();
 }
 
@@ -117,19 +152,31 @@ function renderAmount() {
 
   const usdv = usdValue(n);
   const over = usdv !== null && usdv > CAP;
-  hint.classList.toggle("err", n === null || over);
+  const under = isCelo() && n !== null && (usdv !== null ? usdv < MIN_SWAP_USD : n < minCelo());
+  hint.classList.toggle("err", n === null || over || under);
   if (n === null && tooPrecise()) setText(hint, "Use at most 2 decimal places.");
   else if (n === null) setText(hint, amountIn.value.trim() ? v.badHint : v.emptyHint);
+  else if (isCelo() && !celoRate() && !(quote || rateFailed)) setText(hint, `Checking the $${CAP} limit once the rate loads.`);
+  else if (isCelo() && !celoRate() && under) setText(hint, `CELO rate not published yet. Textile needs about $1 per swap, so send at least about ${fmtCelo(minCelo())}.`);
+  else if (isCelo() && !celoRate()) setText(hint, `CELO rate not published yet. The agent checks the $${CAP} limit on its own quote before paying.`);
+  else if (under) setText(hint, `Worth about ${usd(usdv)}. Textile needs about $1 per swap, so send at least about ${fmtCelo(minCelo())}.`);
+  else if (over && isCelo()) setText(hint, `Worth about ${usd(usdv)}, over the $${CAP} limit. The agent would refuse this payout.`);
+  else if (isCelo()) setText(hint, `Worth about ${usd(usdv)}. The agent pays from about ${fmtCelo(minCelo())} up to $${CAP} (about ${fmtCelo(Math.floor(CAP / celoRate()))}).`);
   else if (over && isReverse()) setText(hint, `Worth about ${usd(usdv)}, over the $${CAP} limit. The agent would refuse this payout.`);
   else if (over) setText(hint, `Over the $${CAP} limit. The agent would refuse this payout.`);
   else if (!isReverse()) setText(hint, `The agent pays up to $${CAP} per payout.`);
   else if (usdv !== null) setText(hint, `Worth about ${usd(usdv)}. The agent pays up to $${CAP} (about ${naira(CAP / reverseRate())}) per payout.`);
   else if (quote || rateFailed) setText(hint, `The agent pays up to $${CAP} per payout, checked against its firm quote before paying.`);
   else setText(hint, `Checking the $${CAP} limit once the rate loads.`);
-  amountIn.setAttribute("aria-invalid", String(n === null || over));
+  amountIn.setAttribute("aria-invalid", String(n === null || over || under));
 
-  out.classList.toggle("over", over);
-  if (!isReverse()) {
+  out.classList.toggle("over", over || under);
+  if (isCelo()) {
+    if (quote && usdv !== null) setText(out, naira(usdv * quote.rate));
+    else if (quote || rateFailed) setText(out, "—");
+    setText($("#kv-leg1"), usdv !== null ? `${fmtCelo(n)} → about ${usd(usdv)}` : "—");
+    setText($("#kv-leg2"), quote && usdv !== null ? `about ${usd(usdv)} → about ${naira(usdv * quote.rate)}` : "—");
+  } else if (!isReverse()) {
     if (quote) setText(out, n === null ? "—" : naira(n * quote.rate));
     else if (rateFailed) setText(out, "—");
   } else if (quote || rateFailed) {
@@ -137,13 +184,24 @@ function renderAmount() {
   }
 
   if (quote) {
-    if (!isReverse()) setText($("#kv-fees"), quote.fromPreview ? `Included — Textile preview for $${cliAmount(quote.previewUsd)}` : "Not included — market bid");
+    if (isCelo()) {
+      setText($("#kv-fees"), !celoRate() ? "Two Textile fees, one per swap"
+        : quote.fromPreview ? `Two Textile fees, both included — previews for ${fmtCelo(celo.celoPreviewCelo)} and $${cliAmount(quote.previewUsd)}`
+        : "Two Textile fees: CELO swap included, cNGN swap not (market bid)");
+    } else if (!isReverse()) setText($("#kv-fees"), quote.fromPreview ? `Included — Textile preview for $${cliAmount(quote.previewUsd)}` : "Not included — market bid");
     else setText($("#kv-fees"), reverseRate() ? `Included — Textile preview for ${naira(quote.reversePreviewNgn ?? 14400)}` : "—");
   }
   return n;
 }
 
 // ---------- commands ----------
+/** In the CELO corridor the payment-link builder is replaced by a plain note; otherwise the hint starts hidden. */
+function showLinkNote() {
+  reqHint.classList.toggle("err", !isCelo());
+  reqHint.hidden = !isCelo();
+  setText(reqHint, isCelo() ? LINK_NOTE_CELO : "");
+}
+
 function renderCommand() {
   const n = readAmount();
   const raw = recipientIn.value;
@@ -168,20 +226,28 @@ function renderCommand() {
     const msg = !nameOk ? "Fix the recipient name to build the command." : tooPrecise() ? "Fix the amount to build the command." : "Enter an amount to build the command.";
     for (const p of [cmdPre, askPre, reqPre]) setText(p, msg);
     for (const b of [cmdCopy, askCopy, reqCopy]) { b.disabled = true; b.removeAttribute("data-copy"); }
-    reqHint.hidden = true;
+    showLinkNote();
     return;
   }
   const amt = cliAmount(n);
   const exec = mode === "real" ? " --execute" : "";
-  const corr = isReverse() ? ` --corridor ${CORRIDORS["cngn-usdt"].id}` : "";
+  const corr = corridor === "usdt-cngn" ? "" : ` --corridor ${corridor}`;
   const cmd = `node src/agent.mjs pay --to ${name} --amount ${amt}${corr}${exec}`;
   // Single quotes keep "$10" literal in bash, zsh and PowerShell (double quotes would expand $1).
   const ask = `node src/agent.mjs ask 'send $${amt} to ${name}'${exec}`;
   const req = `node src/agent.mjs request --to ${name} --amount ${amt}${corr}`;
   setText(cmdPre, cmd);
-  setText(reqPre, req);
   cmdCopy.disabled = false; cmdCopy.dataset.copy = cmd;
+  if (isCelo()) {
+    setText(reqPre, "");
+    reqCopy.disabled = true; reqCopy.removeAttribute("data-copy");
+    setText(askPre, ""); askCopy.disabled = true; askCopy.removeAttribute("data-copy");
+    showLinkNote();
+    return;
+  }
+  setText(reqPre, req);
   const reqTooBig = !isReverse() && n > REQ_MAX + 1e-9;
+  reqHint.classList.add("err");
   reqHint.hidden = !reqTooBig;
   setText(reqHint, reqTooBig ? `Leave room for the cents the agent adds: at most $${REQ_MAX.toFixed(2)}.` : "");
   if (reqTooBig) { reqCopy.disabled = true; reqCopy.removeAttribute("data-copy"); }
@@ -193,9 +259,13 @@ function renderCommand() {
 // ---------- rate ----------
 function renderRate() {
   const rr = reverseRate();
-  if (!isReverse()) setText($("#kv-rate"), `1 USD₮ = ${naira(quote.rate)}`);
+  const cr = celoRate();
+  if (isCelo()) setText($("#kv-rate"), cr ? `1 CELO ≈ ${usd4(cr)} ≈ ${naira(cr * quote.rate)}` : "CELO rate not published yet");
+  else if (!isReverse()) setText($("#kv-rate"), `1 USD₮ = ${naira(quote.rate)}`);
   else setText($("#kv-rate"), rr ? `1 USD₮ costs ${naira(1 / rr)}` : "Not published yet");
-  setText($("#kv-cap"), isReverse() && rr ? `$${CAP} per payout (about ${naira(CAP / rr)})` : `$${CAP} per payout`);
+  if (isCelo()) setText($("#kv-cap"), cr ? `$${CAP} per payout (about ${fmtCelo(Math.floor(CAP / cr))})` : `$${CAP} per payout`);
+  else setText($("#kv-cap"), isReverse() && rr ? `$${CAP} per payout (about ${naira(CAP / rr)})` : `$${CAP} per payout`);
+  setText($("#kv-min"), cr ? `About ${fmtCelo(minCelo())} (about ${usd(minCelo() * cr)}), $1 per swap` : "About 20 CELO (about $1.10), $1 per swap");
 
   const ageText = quote.ageMin < 1 ? "Updated just now" : quote.ageMin < 120 ? `Updated ${quote.ageMin} min ago` : `Updated ${Math.round(quote.ageMin / 60)} h ago`;
   const fresh = badge("", quote.stale ? "warn" : "ok");
@@ -208,6 +278,12 @@ function renderRate() {
   setText($("#kv-market"), bid > 0 && ask > 0 ? `${naira(bid)} / ${naira(ask)}` : "—");
 
   const alerts = [];
+  if (isCelo() && !cr) {
+    alerts.push(el("div", { class: "alert warn mt-16" }, icon("alert"),
+      el("span", {}, el("b", {}, "CELO rate not published yet. "),
+        "The CELO price is added to the rate feed on its next refresh (every 30 min). For a live price now, run ",
+        el("code", { class: "inline" }, "node src/agent.mjs quote --amount 50 --corridor celo-cngn"), ".")));
+  }
   if (isReverse() && !rr) {
     alerts.push(el("div", { class: "alert warn mt-16" }, icon("alert"),
       el("span", {}, el("b", {}, "Reverse rate not published yet. "),
@@ -222,8 +298,9 @@ function renderRate() {
 }
 
 function renderRateError() {
-  for (const id of ["#kv-rate", "#kv-fees", "#kv-source", "#kv-market"]) setText($(id), "—");
+  for (const id of ["#kv-rate", "#kv-fees", "#kv-source", "#kv-market", "#kv-leg2"]) setText($(id), "—");
   setText($("#kv-cap"), `$${CAP} per payout`);
+  setText($("#kv-min"), "About 20 CELO (about $1.10), $1 per swap");
   $("#rate-error").replaceChildren(el("div", { class: "alert err mt-16" }, icon("alert"),
     el("span", {}, "Couldn't load the exchange rate. Refresh the page to try again, or check live rates in the ",
       el("a", { class: "link", href: "https://fx-docs.textilecredit.com" }, "Textile FX docs"), ".")));
@@ -245,7 +322,7 @@ presetBox.addEventListener("click", (e) => {
 });
 for (const b of corridorBtns) {
   b.addEventListener("click", () => {
-    if (b.dataset.corridor === corridor || !CORRIDORS[b.dataset.corridor]) return;
+    if (b.dataset.corridor === corridor || !VIEW[b.dataset.corridor]) return;
     corridor = b.dataset.corridor;
     amountIn.value = String(VIEW[corridor].start); // amounts mean a different currency now
     renderCorridor();
@@ -257,13 +334,24 @@ for (const b of modeBtns) {
   b.addEventListener("click", () => { mode = b.dataset.mode; renderCommand(); });
 }
 
-// quote.html#corridor=cngn-usdt opens in "Pay in dollars" (shareable from other pages and docs)
+// quote.html#corridor=cngn-usdt (or celo-cngn) opens in that corridor (shareable from other pages and docs)
 const hashCorridor = new URLSearchParams(location.hash.slice(1)).get("corridor");
-if (hashCorridor === "cngn-usdt") { corridor = hashCorridor; amountIn.value = String(VIEW[corridor].start); }
+if (hashCorridor === "cngn-usdt" || hashCorridor === "celo-cngn") { corridor = hashCorridor; amountIn.value = String(VIEW[corridor].start); }
 
 renderCorridor();
 renderAmount();
 renderCommand();
+
+/** core.js loadRate() doesn't pass celoUsdRate through, so read it from the same source (the live API on Vercel,
+ *  else rate.json). A failure here only hides the CELO corridor's estimate. */
+async function loadCeloRate() {
+  let d = null;
+  if (HAS_API) { try { d = await getJson("/api/rate"); } catch { d = null; } }
+  if (!(Number(d && d.celoUsdRate) > 0)) { try { d = await getJson("rate.json", { cache: "no-store" }); } catch { d = null; } }
+  const r = Number(d && d.celoUsdRate);
+  return r > 0 ? { celoUsdRate: r, celoPreviewCelo: Number(d.celoPreviewCelo) > 0 ? Number(d.celoPreviewCelo) : 20 } : null;
+}
+const celoP = loadCeloRate().catch(() => null);
 
 try {
   quote = await loadRate();
@@ -271,4 +359,5 @@ try {
   rateFailed = true;
   renderRateError();
 }
+celo = await celoP;
 renderAll();

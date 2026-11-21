@@ -2,7 +2,7 @@
 // Docs: https://fx-docs.textilecredit.com/api/v2/rfq
 import crypto from "node:crypto";
 import { toHex } from "viem";
-import { CHAIN, TEXTILE_API, TOKENS } from "./config.mjs";
+import { CELO_TOKEN, CHAIN, TEXTILE_API, TOKENS } from "./config.mjs";
 
 async function call(method, path, { body, headers } = {}) {
   let res;
@@ -22,12 +22,12 @@ async function call(method, path, { body, headers } = {}) {
   return { status: res.status, json };
 }
 
-const KNOWN = new Set(Object.values(TOKENS).map((t) => t.address.toLowerCase()));
+const KNOWN = new Set([...Object.values(TOKENS), CELO_TOKEN].map((t) => t.address.toLowerCase()));
 
 /** RFQ body for any supported pair. `sell` and `buy` are token addresses; amounts are base units. */
 export function rfqBody(sell, buy, sellAmount, taker) {
   if (!KNOWN.has(String(sell).toLowerCase()) || !KNOWN.has(String(buy).toLowerCase()) || String(sell).toLowerCase() === String(buy).toLowerCase()) {
-    throw new Error("rfqBody: sell and buy must be two different supported tokens (USDT, cNGN)");
+    throw new Error("rfqBody: sell and buy must be two different supported tokens (USDT, cNGN, CELO)");
   }
   if (!/^\d+$/.test(String(sellAmount)) || BigInt(sellAmount) === 0n) throw new Error("rfqBody: sellAmount must be positive base units");
   return {

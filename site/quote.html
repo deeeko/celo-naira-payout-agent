@@ -5,18 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://forno.celo.org https://celo.blockscout.com; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
 <title>Quote · Naira Payout</title>
-<meta name="description" content="See what a payout delivers in naira or in dollars at the live Textile FX rate, and build the agent command or payment link to send it.">
+<meta name="description" content="See what a payout delivers in naira or in dollars, or in naira from CELO, at the live Textile FX rate, and build the agent command to send it.">
 <meta name="theme-color" content="#040806">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Naira Payout Agent">
 <meta property="og:description" content="Pay someone in naira or dollars. Converts on Textile FX and pays out on Celo.">
-<meta property="og:image" content="https://deeeko.github.io/celo-naira-payout-agent/og.png">
+<meta property="og:image" content="https://naira-payout.vercel.app/og.png">
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="icon" href="logo.png" type="image/png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="assets/styles.css">
-<style>.field, .card-b.stack { grid-template-columns: minmax(0, 1fr); }</style>
+<style>.field, .card-b.stack { grid-template-columns: minmax(0, 1fr); } .kv-list li[hidden] { display: none; }</style>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -99,7 +99,7 @@
   <header class="page-head container">
     <span class="eyebrow">Live rate</span>
     <h1 class="page-title">Quote a <em>payout</em></h1>
-    <p class="lead">Pay someone in naira or in dollars. Enter an amount to see roughly what the recipient gets at the current Textile FX rate, then copy the command that runs it with the agent.</p>
+    <p class="lead">Pay someone in naira or in dollars, or pay naira from CELO. Enter an amount to see roughly what the recipient gets at the current Textile FX rate, then copy the command that runs it with the agent.</p>
   </header>
 
   <div class="container">
@@ -111,10 +111,11 @@
           <div id="rate-error" aria-live="polite"></div>
 
           <div class="field mt-24">
-            <span class="label" id="corridor-label">Recipient is paid in</span>
+            <span class="label" id="corridor-label">Payout</span>
             <div class="segmented" style="justify-self:start" role="group" aria-labelledby="corridor-label" id="corridor">
-              <button type="button" data-corridor="usdt-cngn" aria-pressed="true">Pay in naira</button>
-              <button type="button" data-corridor="cngn-usdt" aria-pressed="false">Pay in dollars</button>
+              <button type="button" data-corridor="usdt-cngn" aria-pressed="true" aria-label="Pay in naira">Naira</button>
+              <button type="button" data-corridor="cngn-usdt" aria-pressed="false" aria-label="Pay in dollars">Dollars</button>
+              <button type="button" data-corridor="celo-cngn" aria-pressed="false" aria-label="Pay in naira from CELO">From CELO</button>
             </div>
             <p class="hint" id="corridor-hint" aria-live="polite">You send USD₮. The recipient gets cNGN.</p>
           </div>
@@ -143,11 +144,14 @@
 
           <ul class="kv-list mt-16" aria-live="polite">
             <li><span>Exchange rate</span><span id="kv-rate" class="num"><span class="skel"></span></span></li>
+            <li id="kv-leg1-row" hidden><span>Swap 1: CELO → USD₮</span><span id="kv-leg1" class="num">—</span></li>
+            <li id="kv-leg2-row" hidden><span>Swap 2: USD₮ → cNGN</span><span id="kv-leg2" class="num">—</span></li>
             <li><span>Fees</span><span id="kv-fees"><span class="skel"></span></span></li>
             <li><span>Rate source</span><span id="kv-source"><span class="skel"></span></span></li>
             <li><span>Route</span><span id="kv-route">USD₮ → cNGN on Textile FX</span></li>
             <li><span>Delivered as</span><span id="kv-delivered">cNGN on Celo, redeemable for naira</span></li>
             <li><span>Payout limit</span><span id="kv-cap" class="num"><span class="skel"></span></span></li>
+            <li id="kv-min-row" hidden><span>Minimum</span><span id="kv-min" class="num">—</span></li>
             <li><span>Market bid / ask</span><span id="kv-market" class="num"><span class="skel"></span></span></li>
           </ul>
         </div>
@@ -191,12 +195,12 @@
 
             <div class="field">
               <span class="label" id="req-label">Or ask someone else to pay: create a payment link</span>
-              <div class="code">
+              <div class="code" id="req-code">
                 <pre id="req" aria-labelledby="req-label"></pre>
                 <button class="icon-btn" type="button" id="req-copy" aria-label="Copy payment link command" data-copy-label="Command copied"><svg class="i"><use href="#i-copy"/></svg></button>
               </div>
               <p class="hint err" id="req-hint" aria-live="polite" hidden></p>
-              <p class="small muted">Prints a link to a payment page and nudges the amount by a few cents (or kobo) so the deposit can be matched exactly. With autopilot running (<code class="inline">watch --execute</code>), the agent pays the recipient once that exact amount arrives, within the same limits.</p>
+              <p class="small muted" id="req-note">Prints a link to a payment page and nudges the amount by a few cents (or kobo) so the deposit can be matched exactly. With autopilot running (<code class="inline">watch --execute</code>), the agent pays the recipient once that exact amount arrives, within the same limits.</p>
             </div>
           </div>
         </section>
@@ -206,7 +210,7 @@
           <div class="card-b">
             <ul class="checks" style="grid-template-columns:minmax(0,1fr)">
               <li><svg class="i"><use href="#i-check"/></svg><span>The contact is in your <b>contacts.json</b> allow-list.</span></li>
-              <li><svg class="i"><use href="#i-check"/></svg><span>The agent wallet holds the <b id="check-token">USD₮</b> and a little <b>CELO</b> for gas.</span></li>
+              <li><svg class="i"><use href="#i-check"/></svg><span id="check-wallet">The agent wallet holds the <b>USD₮</b> and a little <b>CELO</b> for gas.</span></li>
               <li><svg class="i"><use href="#i-check"/></svg><span id="check-cap">The amount is <b>$25 or less</b>.</span></li>
             </ul>
           </div>

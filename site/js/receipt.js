@@ -11,7 +11,7 @@ initChrome();
 
 // Receipt links point at the published site, so shares, QR codes and onchain feedback always carry the
 // public URL, even when this page is opened from a local copy.
-const SITE_RECEIPT = "https://deeeko.github.io/celo-naira-payout-agent/receipt.html";
+// The receipt URL on whichever site is open (Vercel or the GitHub Pages mirror), so the QR always works.
 const HASH_RE = /^0x[0-9a-fA-F]{64}$/;
 const REQ_RE = /^r_[a-z0-9]{6,16}$/;
 const CELO_CHAIN = "0xa4ec";
