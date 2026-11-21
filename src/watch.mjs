@@ -26,12 +26,17 @@
 //     `retry --ntag <key> --force-refused` can pay one later. The global daily cap and prices stop autopilot.
 //     The nTag list is loaded in full once, then refreshed incrementally each poll; while it is not loaded up to a
 //     deposit's block, that nTag deposit waits (cursor pinned before it) and requests/registrations before it go on.
+//   - Status server (src/status-report.mjs): with --execute, every recorded, refused and paid deposit is also queued for
+//     the site's /api/status (a payout error as "failed"). On start it also queues whatever its saved records of the
+//     last 48 h say that the server hasn't confirmed (all kinds, incl. direct owner payouts from receipts.jsonl). Queuing
+//     is a tiny local write; sending happens in the background. A reporting failure is logged once and never stops,
+//     delays or changes a payout.
 import fs from "node:fs";
 import { createPublicClient, formatUnits, http, parseAbiItem, parseUnits } from "viem";
 import { AGENT_ADDRESS, CHAIN, TOKENS, WATCH_STATE_FILE } from "./config.mjs";
 import { loadAccount } from "./chain.mjs";
 import { getCorridor, refusal } from "./guards.mjs";
-import { log, pay, preflight } from "./pay.mjs";
+import { log, pay, preflight, readReceipts } from "./pay.mjs";
 import { preview } from "./textile.mjs";
 import { formatAmount, loadRequests, matchDeposit, receiptNoLink, requestStatus, saveRequests } from "./requests.mjs";
 import {
@@ -42,6 +47,7 @@ import {
   decodeNtagMemo, loadNtagOpsCache, loadNtagPayments, looksLikeNtagAttempt, ownerOf, refreshNtagOpsCache, resolveNtagsBefore,
   saveNtagPayments, verifyNtagOpOnchain,
 } from "./ntags.mjs";
+import { depositEvent, makeStatusReporter } from "./status-report.mjs";
 
 export const MAX_BLOCK_RANGE = 5000n; // Forno eth_getLogs limit
 const TRANSFER = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
@@ -176,6 +182,7 @@ const DEFAULT_IO = {
   loadAccount, loadState, saveState, loadRequests, saveRequests, loadRegState, saveRegState, loadNtagPayments, saveNtagPayments,
   log, pay, preflight, discoverRegistrations, indexedHeight, loadNtagOpsCache, refreshNtagOpsCache, verifyRegistrationOnchain,
   verifyNtagOpOnchain, ntagUsdFloor, print: (s) => console.log(s), sleep: null, now: () => Date.now(),
+  readReceipts, makeStatus: (say) => makeStatusReporter({ say }),
 };
 
 /**
@@ -260,6 +267,26 @@ export async function watch({ execute = false, interval = 15, polls = Infinity, 
   const open = requests().filter((r) => requestStatus(r) === "open");
   say(`${open.length} open request(s)${open.length ? ": " + open.map((r) => `${r.id} ${r.amount} ${getCorridor(r.dir).sellToken.symbol} for ${r.name}`).join(", ") : ". Create one with: node src/agent.mjs request --to NAME --amount N"}`);
 
+  // Status server: execute mode only (a dry run records nothing, so it reports nothing). Never throws into autopilot.
+  let status = null;
+  if (execute) {
+    try {
+      status = io.makeStatus?.(say) ?? null;
+      if (status?.enabled) {
+        say("Status server: reporting each deposit's status to the site in the background.");
+        status.syncRecords({
+          requests: io.loadRequests(), registrations: io.loadRegState(), ntagPayments: io.loadNtagPayments(), receipts: io.readReceipts(),
+        }, { agent });
+        status.flush().catch(() => {});
+      }
+    } catch { status = null; }
+  }
+  /** Queues a status event for the site. Reporting can never stop, delay or change a payout. */
+  const report = (fields) => {
+    if (!status?.enabled) return;
+    try { status.report(depositEvent(fields)); } catch { /* reporting is best effort */ }
+  };
+
   let cursor = null; // last fully processed block
   let failures = 0;
   let caughtUp = false;
@@ -340,8 +367,9 @@ export async function watch({ execute = false, interval = 15, polls = Infinity, 
     // Pre-flight (sends nothing): contact + allow-list, both caps incl. the daily cap, and a live preview.
     // If it fails, the request is left untouched and the cursor stays before this deposit, so after the owner fixes
     // the cause and restarts, the same deposit matches again. Nothing has been recorded or paid.
+    let pf;
     try {
-      await io.preflight({ to: req.name, amount: req.amount, corridor: req.dir, agent });
+      pf = await io.preflight({ to: req.name, amount: req.amount, corridor: req.dir, agent });
     } catch (e) {
       pin();
       io.log({ type: "preflight_failed", requestId: req.id, token: sym, amount, from: payer, tx: l.transactionHash, block: String(l.blockNumber), error: e.message });
@@ -357,10 +385,13 @@ export async function watch({ execute = false, interval = 15, polls = Infinity, 
     const r = fresh.find((x) => x.id === req.id);
     r.deposit = deposit;
     io.saveRequests(fresh);
+    const ev = { kind: "request", key, recipient: pf?.recipient ?? r.recipient, token: sym, amount, corridor: r.dir, payer };
+    report({ ...ev, status: "received", at: deposit.at });
     let res;
     try {
       res = await io.pay({ to: r.name, amount: r.amount, corridor: r.dir, execute: true, yes: true, requestId: r.id });
     } catch (e) {
+      report({ ...ev, status: "failed", at: new Date().toISOString() });
       saveFailure(r.id, () => {
         const after = io.loadRequests();
         const failed = after.find((x) => x.id === r.id);
@@ -379,6 +410,7 @@ export async function watch({ execute = false, interval = 15, polls = Infinity, 
       Object.assign(done, { paidAt: new Date().toISOString(), hashes: res.hashes, receiptUrl: res.receiptUrl, receiptNo: res.receiptNo, paid: res.paid });
       io.saveRequests(after);
     });
+    report({ ...ev, status: "paid", res, at: new Date().toISOString() });
     say(`Paid ${r.id}. Receipt ${res.receiptNo}: ${receiptNoLink(res.receiptNo)}`);
     if (res.untagged?.length) throw new StopError(`Payout ${r.id} sent, but ${res.untagged.join(", ")} lack the attribution tag. Stopping to investigate.`);
   }
@@ -398,9 +430,14 @@ export async function watch({ execute = false, interval = 15, polls = Infinity, 
       delete rec.deposit;
       delete rec.error;
     }
-    rec.refused = { ...(rec.refused ?? {}), [key]: { ...deposit, reason, refusedAt: new Date().toISOString() } };
+    const refusedAt = new Date().toISOString();
+    rec.refused = { ...(rec.refused ?? {}), [key]: { ...deposit, reason, refusedAt } };
     s[id] = rec;
     io.saveRegState(s);
+    report({
+      kind: "registration", key, registration: reg.hash, recipient: rec.from ?? reg.from, token: fields.token, amount: fields.amount,
+      corridor: reg.req.d, payer: deposit.payer, status: "refused", reason, at: refusedAt,
+    });
   }
 
   async function handleRegistration(l, key, reg, { sym, amount, payer, timeMs }) {
@@ -447,12 +484,15 @@ export async function watch({ execute = false, interval = 15, polls = Infinity, 
       ...(reg.req.m ? { note: reg.req.m } : {}), deposit,
     };
     io.saveRegState(fresh);
+    const ev = { kind: "registration", key, registration: reg.hash, recipient: from, token: sym, amount, corridor: reg.req.d, payer };
+    report({ ...ev, status: "received", at: deposit.at });
     let res;
     try {
       res = await io.pay({ ...args, recipientAddress: from, execute: true, yes: true });
     } catch (e) {
       // A per-payout / per-wallet cap the firm quote broke, before anything was sent: a refusal, not a stop.
       if (e.permanent && !e.hashes) return refuseRegistration(reg, key, deposit, e.message, where);
+      report({ ...ev, status: "failed", at: new Date().toISOString() });
       saveFailure(`registration ${reg.hash}`, () => {
         const after = io.loadRegState();
         after[id].error = e.message;
@@ -469,6 +509,7 @@ export async function watch({ execute = false, interval = 15, polls = Infinity, 
       Object.assign(after[id], { paidAt: new Date().toISOString(), hashes: res.hashes, receiptUrl: res.receiptUrl, receiptNo: res.receiptNo, paid: res.paid });
       io.saveRegState(after);
     });
+    report({ ...ev, status: "paid", res, at: new Date().toISOString() });
     say(`Paid registration ${reg.hash}. Receipt ${res.receiptNo}: ${receiptNoLink(res.receiptNo)}`);
     if (res.untagged?.length) throw new StopError(`Payout for ${reg.hash} sent, but ${res.untagged.join(", ")} lack the attribution tag. Stopping to investigate.`);
   }
@@ -484,6 +525,10 @@ export async function watch({ execute = false, interval = 15, polls = Infinity, 
     const s = io.loadNtagPayments();
     s[key] = { ...(s[key] ?? {}), id: key, ...fields, status: "refused", reason, refusedAt: new Date().toISOString() };
     io.saveNtagPayments(s);
+    report({
+      kind: "ntag", key, tag: where.ntag ?? undefined, recipient: s[key].from ?? s[key].owner, token: where.token, amount: where.amount,
+      corridor: s[key].dir, payer: where.from, status: "refused", reason, at: s[key].refusedAt,
+    });
   }
 
   async function handleNtag(l, key, tag, { sym, amount, payer, timeMs, tx }) {
@@ -550,12 +595,15 @@ export async function watch({ execute = false, interval = 15, polls = Infinity, 
     if (fresh[key]) { say(`Deposit ${l.transactionHash} for @${tag} was already handled. Skipping.`); return; }
     fresh[key] = record(from);
     io.saveNtagPayments(fresh);
+    const ev = { kind: "ntag", key, tag, recipient: from, token: sym, amount, corridor: d.corridor, payer };
+    report({ ...ev, status: "received", at: deposit.at });
     let res;
     try {
       res = await io.pay({ ...args, recipientAddress: from, execute: true, yes: true });
     } catch (e) {
       // A per-payout / per-wallet cap the firm quote broke (e.g. cNGN near $25), before anything was sent: a refusal.
       if (e.permanent && !e.hashes) return refuseNtag(key, e.message, {}, where);
+      report({ ...ev, status: "failed", at: new Date().toISOString() });
       saveFailure(`the nTag payment ${key}`, () => {
         const after = io.loadNtagPayments();
         after[key].error = e.message;
@@ -572,6 +620,7 @@ export async function watch({ execute = false, interval = 15, polls = Infinity, 
       Object.assign(after[key], { paidAt: new Date().toISOString(), hashes: res.hashes, receiptUrl: res.receiptUrl, receiptNo: res.receiptNo, paid: res.paid });
       io.saveNtagPayments(after);
     });
+    report({ ...ev, status: "paid", res, at: new Date().toISOString() });
     say(`Paid @${tag}. Receipt ${res.receiptNo}: ${receiptNoLink(res.receiptNo)}`);
     if (res.untagged?.length) throw new StopError(`Payout to @${tag} sent, but ${res.untagged.join(", ")} lack the attribution tag. Stopping to investigate.`);
   }
@@ -666,5 +715,7 @@ export async function watch({ execute = false, interval = 15, polls = Infinity, 
     say("Stopped.");
   } finally {
     process.off("SIGINT", onSigint);
+    // one last chance for queued status reports (at most a few seconds; payouts are already done)
+    try { await status?.close?.({ waitMs: 5_000 }); } catch { /* best effort */ }
   }
 }

@@ -10,6 +10,8 @@ import {
   ntagCard, stage, revealCard, shareBlock, alertBox, availabilityMessage, ntagRules, cleanTagInput, suggestNtags, waitForReceipt,
   plainError, sameAddr, sleep, nameText, LIMITS, LIMITS_TEXT, REFUSED_NOTE, receivableToday, loadNtagStateFresh, loadTagLedger,
   slowNotice, scrollToNode, focusHeading, noWalletHelp, noCeloAlert, celoBalance,
+  agentStatus, allowanceFromStatus, combineAllowance, statusFinal, receivedStale, reasonText, paidText, sourceNote, units6Of,
+  STATUS_SOURCE, DELAYED_NOTE, SLOW_NOTE,
 } from "../assets/ntag-ui.js";
 
 initChrome();
@@ -541,9 +543,15 @@ function ownedView(s, tag, entry) {
 async function loadAllowanceInto(node, addr) {
   const lim = `limit $${LIMITS.perPersonDay} per person per day`;
   try {
+    // the chain always, the agent's records when fresh; the smaller room wins (see combineAllowance)
     if (!A.rate) A.rate = await loadRate().catch(() => null);
-    const a = await receivableToday(addr, A.rate);
-    node.replaceChildren(el("b", {}, `You can receive about ${dollars(a.leftUsd)} more today`), ` · ${lim}`);
+    const [server, chain] = await Promise.all([
+      agentStatus({ recipient: addr }).then((a) => allowanceFromStatus(a)).catch(() => null),
+      receivableToday(addr, A.rate).catch(() => null),
+    ]);
+    const a = combineAllowance(server, chain);
+    if (!a) throw new Error("no allowance");
+    node.replaceChildren(el("b", {}, `You can receive ${a.exact ? "" : "about "}${dollars(a.leftUsd)} more today`), ` · ${lim}. `, sourceNote(a.source === "agent"));
   } catch {
     node.textContent = `Couldn't check how much more you can receive today (${lim}). The agent still checks it before paying.`;
   }
@@ -720,10 +728,28 @@ const paySlot = el("div", {});
 const amountText = (units, token) => `${num2.format(Number(units) / 1e6)} ${token === "USDT" ? "USD₮" : "cNGN"}`;
 const watTime = (ms) => `${lagosTime(ms)} WAT`;
 
+/** A row for a deposit the agent reported but the chain list didn't include (older, or the list was cut short). */
+function rowFromEvent(e) {
+  return { hash: e.depositTx, ts: Date.parse(e.at), from: e.payer, units: units6Of(e.amount), token: e.token === "USDT" ? "USDT" : "CNGN", agent: e };
+}
 function payRow(d, tag) {
   const meta = el("span", { class: "meta" }, "From ", el("a", { class: "mono link", href: celoscanAddr(d.from), title: d.from }, short(d.from)), ` · ${watTime(d.ts)}`);
   let end;
-  if (d.status === "ineligible") {
+  // the agent's own record of this deposit: "paid" / "refused" are final; otherwise a payout found on the chain wins
+  const ev = d.agent && (statusFinal(d.agent) || d.status !== "paid") ? d.agent : null;
+  if (ev?.status === "paid") {
+    const got = paidText(ev);
+    end = [el("span", { class: "badge ok" }, el("span", { class: "dot" }), got ? `Paid ${got}` : "Paid"),
+      el("a", { class: "link small", href: `receipt.html#${ev.receiptNo}` }, ev.receiptNo, " ", icon("right"))];
+  } else if (ev?.status === "refused") {
+    end = [badge("Not paid", "err"), el("span", { class: "micro muted" }, `${reasonText(ev.reason)}. The payer can ask the agent's owner for a refund.`)];
+  } else if (ev?.status === "failed") {
+    end = [badge("Payout delayed", "warn"), el("span", { class: "micro muted" }, DELAYED_NOTE)];
+  } else if (ev?.status === "received" && receivedStale(ev)) {
+    end = [badge("Waiting for the agent", "warn"), el("span", { class: "micro muted" }, `${SLOW_NOTE} The agent recorded it but hasn't reported the payout yet.`)];
+  } else if (ev?.status === "received") {
+    end = [badge("Received · paying now", "warn"), el("span", { class: "micro muted" }, "The agent has it and is paying you")];
+  } else if (d.status === "ineligible") {
     const k = d.reason.kind;
     if (k === "self") end = [badge("Not paid: sent from your own wallet", "err")];
     else if (k === "min") end = [badge("Below the minimum: not paid", "err"), el("span", { class: "micro muted" }, d.reason.text)];
@@ -764,8 +790,24 @@ function renderPayments(s) {
   body.replaceChildren(el("p", { class: "small muted", role: "status" }, el("span", { class: "skel", style: "width:14px;height:14px;border-radius:50%;margin-right:8px" }), `Looking for payments to @${tag}…`));
   (async () => {
     if (!A.rate) A.rate = await loadRate().catch(() => null);
-    return loadTagLedger({ tag, owner: s.address, sinceSec: entry.since, rate: A.rate });
-  })().then(({ deposits, partial }) => {
+    // the chain list (as before) and the agent's own records (exact statuses), side by side
+    const [ledger, agent] = await Promise.all([
+      loadTagLedger({ tag, owner: s.address, sinceSec: entry.since, rate: A.rate }).catch((error) => ({ error })),
+      agentStatus({ tag }),
+    ]);
+    if (ledger.error && !agent) throw ledger.error;
+    // this tag's deposits since the claim: paid to this wallet, or not paid to anyone (refused)
+    const events = (agent?.events ?? []).filter((e) => e.kind === "ntag" && e.tag === tag && e.depositTx
+      && (e.recipient ? sameAddr(e.recipient, s.address) : Date.parse(e.at) >= entry.since * 1000));
+    // matched by the full "<tx>:<logIndex>" id, so two transfers in one transaction never swap statuses
+    const idOf = (d) => `${String(d.hash).toLowerCase()}:${Number(d.logIndex)}`;
+    const byId = new Map(events.map((e) => [e.id, e]));
+    const deposits = (ledger.error ? [] : ledger.deposits).map((d) => ({ ...d, agent: byId.get(idOf(d)) ?? null }));
+    const listed = new Set(deposits.map(idOf));
+    for (const e of events) if (!listed.has(e.id)) deposits.push(rowFromEvent(e));
+    deposits.sort((a, b) => b.ts - a.ts);
+    return { deposits, partial: Boolean(ledger.error || ledger.partial), fromAgent: Boolean(agent), chainFailed: Boolean(ledger.error) };
+  })().then(({ deposits, partial, fromAgent, chainFailed }) => {
     if (my !== paySeq) return;
     body.removeAttribute("aria-busy");
     if (!deposits.length) {
@@ -774,8 +816,11 @@ function renderPayments(s) {
         el("button", { class: "btn btn-secondary btn-sm", type: "button", dataset: { copy: ntagUrl(tag), copyLabel: "Link copied" } }, icon("copy"), "Copy your link")));
       return;
     }
+    const where = chainFailed ? "Payments the agent reported; Blockscout couldn't be reached for the full list."
+      : partial ? "Your most recent payments, read from Blockscout. Older ones may not be listed." : "Payments since you claimed the tag, read from Blockscout.";
     body.replaceChildren(...deposits.map((d) => payRow(d, tag)),
-      el("p", { class: "micro muted mt-16" }, partial ? "Your most recent payments, read from Blockscout. Older ones may not be listed." : "Payments since you claimed the tag, read from Blockscout.",
+      el("p", { class: "micro muted mt-16" }, where,
+        ` Statuses: ${fromAgent ? STATUS_SOURCE.agent : STATUS_SOURCE.chain}.`,
         ` Limits: ${LIMITS_TEXT}. `, REFUSED_NOTE));
   }).catch(() => {
     if (my !== paySeq) return;

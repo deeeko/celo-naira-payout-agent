@@ -138,6 +138,29 @@ for (const file of walk(SITE).filter((f) => f.endsWith(".json") && !f.endsWith("
   try { JSON.parse(fs.readFileSync(file, "utf8")); } catch { fail(`${path.relative(".", file)}: invalid JSON`); }
 }
 
+// The Windows installer (irm https://naira-payout.vercel.app/install.ps1 | iex). Windows PowerShell 5.1 decodes a
+// download without a BOM as Latin-1 and keeps a BOM as a stray first character, so the file must be ASCII with no BOM.
+// It must be served as text (vercel.json) so people can read it in the browser before running it.
+{
+  const file = path.join(SITE, "install.ps1");
+  if (!fs.existsSync(file)) fail("site/install.ps1 is missing (the one-line Windows installer)");
+  else {
+    const buf = fs.readFileSync(file);
+    if (buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) fail("site/install.ps1: starts with a UTF-8 BOM");
+    const bad = buf.findIndex((b) => b > 0x7e || (b < 0x20 && b !== 0x0a && b !== 0x0d && b !== 0x09));
+    if (bad !== -1) fail(`site/install.ps1: non-ASCII or control byte 0x${buf[bad].toString(16)} at offset ${bad}`);
+    const src = buf.toString("ascii");
+    if (!/^& \{\r?$/m.test(src) || !/\n\}\s*$/.test(src)) fail("site/install.ps1: the code must be one & { ... } block, so a cut-off download never runs");
+    if (/^\s*exit\b/im.test(src)) fail("site/install.ps1: never call exit (it would close the user's window under iex); use return");
+    if (!src.includes("https://codeload.github.com/$Repo/zip/$Ref")) fail("site/install.ps1: should download the GitHub codeload zip for $Ref");
+  }
+  const vercelRaw = fs.readFileSync("vercel.json");
+  if (vercelRaw[0] !== 0x7b) fail("vercel.json: must start with '{' (no BOM)");
+  const rule = (JSON.parse(vercelRaw.toString("utf8")).headers || []).find((h) => h.source === "/install.ps1");
+  const ct = rule && rule.headers.find((h) => h.key.toLowerCase() === "content-type");
+  if (!ct || !/^text\/plain;\s*charset=utf-8$/i.test(ct.value)) fail("vercel.json: /install.ps1 must be served as text/plain; charset=utf-8");
+}
+
 if (errors.length) {
   console.error(`Site check failed (${errors.length}):\n` + errors.map((e) => "  - " + e).join("\n"));
   process.exit(1);

@@ -228,6 +228,44 @@
         </div>
       </section>
 
+      <section class="card" id="install" aria-labelledby="install-h">
+        <div class="card-h"><h2 id="install-h">Install the ntag command (Windows)</h2><span class="muted small"><a class="link" href="install.ps1">install.ps1</a></span></div>
+        <div class="card-b">
+          <p class="soft"><code class="inline" translate="no">ntag</code> pays an nTag from <b>your own wallet</b> in PowerShell. To install it, open PowerShell (no admin needed) and paste this line. It takes about a minute.</p>
+          <div class="code mt-16">
+            <pre translate="no">irm https://naira-payout.vercel.app/install.ps1 | iex</pre>
+            <button class="icon-btn" type="button" aria-label="Copy the install command" data-copy-label="Command copied" data-copy="irm https://naira-payout.vercel.app/install.ps1 | iex"><svg class="i"><use href="#i-copy"/></svg></button>
+          </div>
+          <p class="small muted mt-8">You can <a class="link" href="install.ps1">read the script</a> before you run it. It needs <b>Node.js 20 or newer</b>; if Node is missing it says so and stops (get it with <code class="inline" translate="no">winget install OpenJS.NodeJS.LTS</code> or from <a class="link" href="https://nodejs.org">nodejs.org</a>). It never installs other software for you.</p>
+          <ol class="steps mt-24">
+            <li><h3>Check</h3><p>Looks for Node.js 20 or newer and npm. Nothing is changed if they are missing.</p></li>
+            <li><h3>Download</h3><p>Fetches the code as a zip from GitHub (<code class="inline" translate="no">main</code>, or the branch, tag or commit in <code class="inline" translate="no">$env:NTAG_REF</code>) and installs its libraries with <code class="inline" translate="no">npm ci --ignore-scripts</code>, so no package runs code while installing.</p></li>
+            <li><h3>Swap</h3><p>Checks the new copy starts, then puts it in <code class="inline" translate="no">%LOCALAPPDATA%\naira-payout\app</code> in one rename. If anything fails, your previous install stays as it was.</p></li>
+            <li><h3>PATH</h3><p>Writes the launcher <code class="inline" translate="no">%LOCALAPPDATA%\naira-payout\bin\ntag.cmd</code> and adds that folder to your user PATH. Terminals that were already open need a restart.</p></li>
+          </ol>
+        </div>
+        <div class="card-b">
+          <h3 class="label">Then</h3>
+          <div class="code mt-16">
+            <pre translate="no">ntag wallet new        # your wallet, protected by a send password
+ntag wallet            # your address: add USD₮ and a little CELO for fees
+ntag whois ada         # who owns @ada
+ntag send ada 10       # you send $10 USD₮, @ada gets naira</pre>
+            <button class="icon-btn" type="button" aria-label="Copy the first ntag commands" data-copy-label="Commands copied" data-copy="ntag wallet new
+ntag wallet
+ntag whois ada
+ntag send ada 10"><svg class="i"><use href="#i-copy"/></svg></button>
+          </div>
+          <p class="small muted mt-8">In PowerShell a leading <code class="inline" translate="no">@</code> is special: write <code class="inline" translate="no">ada</code> or <code class="inline" translate="no">'@ada'</code>. <code class="inline" translate="no">ntag help</code> lists every command; <code class="inline" translate="no">--dry-run</code> shows a payment without sending it.</p>
+          <ul class="checks mt-16">
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Update.</b> Run the same line again. The app folder is replaced; your wallet is not touched.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Uninstall.</b> <code class="inline" translate="no">$env:NTAG_UNINSTALL = "1"; irm https://naira-payout.vercel.app/install.ps1 | iex</code> removes the app and bin folders and the PATH entry. By hand: delete both folders and remove the bin folder from your user PATH.</span></li>
+            <li><svg class="i"><use href="#i-check"/></svg><span><b>Options.</b> <code class="inline" translate="no">$env:NTAG_REF</code> pins a branch, tag or commit; <code class="inline" translate="no">$env:NTAG_NO_PATH = "1"</code> leaves your PATH alone and prints the folder to add.</span></li>
+          </ul>
+          <div class="alert mt-16"><svg class="i"><use href="#i-info"/></svg><span>Your wallet is a separate file, <code class="inline" translate="no">%USERPROFILE%\.naira-payout\wallet.json</code> (or <code class="inline" translate="no">NTAG_WALLET_FILE</code>). The installer never creates, reads, moves or deletes it. The key inside is encrypted with your send password, and there is no recovery: copy the file somewhere safe, for example <code class="inline" translate="no">Copy-Item $HOME\.naira-payout\wallet.json D:\backup\</code>, and remember the password.</span></div>
+        </div>
+      </section>
+
       <section class="card" id="receipts" aria-labelledby="receipts-h">
         <div class="card-h"><h2 id="receipts-h">Receipts and reviews</h2></div>
         <div class="card-b">
@@ -422,6 +460,7 @@ node src/agent.mjs watch"><svg class="i"><use href="#i-copy"/></svg></button>
           <li><a href="#flow">How a payout runs</a></li>
           <li><a href="#links">Payment links and autopilot</a></li>
           <li><a href="#ntags">nTags and sign-in</a></li>
+          <li><a href="#install">Install ntag (Windows)</a></li>
           <li><a href="#receipts">Receipts and reviews</a></li>
           <li><a href="#limits">Limits</a></li>
           <li><a href="#safeguards">Safeguards</a></li>

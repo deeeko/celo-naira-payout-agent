@@ -8,6 +8,8 @@ import {
   ntagCard, stage, alertBox, availabilityMessage, ntagFinder, waitForReceipt, plainError, sameAddr, sleep, dayMonthYear,
   nameText, LIMITS, LIMITS_TEXT, CNGN_CAP_USD, REFUSED_NOTE, receivableToday, allowanceResetAt, loadNtagStateFresh,
   loadTagLedger, slowNotice, scrollToNode, focusHeading, noWalletHelp, noCeloAlert, celoBalance,
+  agentStatus, depositStatus, allowanceFromStatus, combineAllowance, receivedStale, reasonText, paidText, sourceNote, REFUND_NOTE,
+  DELAYED_NOTE, SLOW_NOTE,
 } from "../assets/ntag-ui.js";
 
 initChrome();
@@ -227,7 +229,7 @@ function payCard(tag, entry) {
     if (alw && !alw.error && value > alw.leftUsd + 0.005) {
       const at = allowanceResetAt(alw, value);
       if (alw.leftUsd < 1) return { cents, units, usd: value, limit: true, error: `@${tag} has reached today's limit; try again after ${watTime(at)}.` };
-      return { cents, units, usd: value, limit: true, error: `@${tag} can receive about ${dollars(alw.leftUsd)} more today. Send less, or try again after ${watTime(at)}.` };
+      return { cents, units, usd: value, limit: true, error: `@${tag} can receive ${alw.exact ? "" : "about "}${dollars(alw.leftUsd)} more today. Send less, or try again after ${watTime(at)}.` };
     }
     return { cents, units, usd: value };
   }
@@ -243,7 +245,12 @@ function payCard(tag, entry) {
     const lim = `limit $${LIMITS.perPersonDay} per person per day`;
     if (!a) today.textContent = `Checking how much more @${tag} can receive today…`;
     else if (a.error) today.textContent = `Couldn't check how much more @${tag} can receive today (${lim}). The agent still checks it before paying.`;
-    else today.replaceChildren(el("b", {}, `@${tag} can receive about ${dollars(a.leftUsd)} more today`), ` · ${lim}`);
+    else {
+      // "about" unless the agent's fresh records and the chain agree (or the agent's are the stricter): see combineAllowance
+      const all = Number.isFinite(a.globalLeftUsd) && a.globalLeftUsd < a.leftUsd - 0.005
+        ? ` The agent can pay out ${a.exact ? "" : "about "}${dollars(a.globalLeftUsd)} more today across everyone; a payment over that waits until there's room.` : "";
+      today.replaceChildren(el("b", {}, `@${tag} can receive ${a.exact ? "" : "about "}${dollars(a.leftUsd)} more today`), ` · ${lim}.${all} `, sourceNote(a.source === "agent"));
+    }
   }
   function renderForm() {
     for (const b of $$("button", seg)) b.setAttribute("aria-pressed", String(b.dataset.corridor === P.corridor));
@@ -358,9 +365,18 @@ function payCard(tag, entry) {
       connectBtn.lastChild.textContent = "Connect wallet";
     }
   }
+  /**
+   * Room today: ALWAYS read from the chain (straight from Blockscout for the live check before sending), and from the
+   * agent's records when they are fresh; the smaller room wins. Never throws.
+   */
   async function loadAllowance({ live = false } = {}) {
-    try { P.allowance = await receivableToday(entry.owner, P.rate, { live }); }
-    catch { P.allowance = { error: true }; }
+    try {
+      const [server, chain] = await Promise.all([
+        agentStatus({ recipient: entry.owner }).then((a) => allowanceFromStatus(a)).catch(() => null),
+        receivableToday(entry.owner, P.rate, { live }).catch(() => null),
+      ]);
+      P.allowance = combineAllowance(server, chain) ?? { error: true };
+    } catch { P.allowance = { error: true }; }
   }
 
   // ----- send -----
@@ -443,6 +459,8 @@ function payCard(tag, entry) {
       step("agent", `The agent pays @${tag}`, "When autopilot next runs, after Celo confirms your payment."),
       step("paid", "Paid", ""));
     const status = el("div", { "aria-live": "polite" });
+    const source = el("p", { class: "micro muted" }); // where the status comes from: the agent's records or the chain
+    const setSource = (fromAgent) => source.replaceChildren(sourceNote(fromAgent, "nt-source"));
     const again = el("button", { class: "btn btn-secondary", type: "button" }, "Send another payment");
     again.addEventListener("click", () => {
       stop();
@@ -454,7 +472,7 @@ function payCard(tag, entry) {
     });
     const h = el("h3", { style: "font-size:20px;font-weight:500" }, "Waiting for Celo to confirm…");
     const lede = el("p", { class: "small soft mt-8", role: "status" }, `You sent ${sendText} to @${tag}. Keep this page open until Celo confirms it.`);
-    const box = el("div", { class: "nt-track" }, el("div", {}, h, lede), list, status, el("div", { class: "nt-actions" }, again));
+    const box = el("div", { class: "nt-track" }, el("div", {}, h, lede), list, status, source, el("div", { class: "nt-actions" }, again));
     body.replaceChildren(box);
     focusHeading(h);
     if (scroll) requestAnimationFrame(() => scrollToNode(section));
@@ -489,42 +507,78 @@ function payCard(tag, entry) {
       set("agent", "active", "When autopilot next runs.");
       const until = p.at + PAYOUT_WATCH_MS;
       let noted = "";
+      const showPaid = (no, gotText) => {
+        set("agent", "done", "Converted on Textile FX and sent.");
+        set("paid", "done", "");
+        status.replaceChildren(el("div", { class: "nt-paid" }, el("span", { class: "nt-paid-icon" }, icon("check")),
+          el("div", {}, el("b", {}, `Paid · ${no}`),
+            gotText ? el("span", { class: "small soft" }, `@${tag} got ${gotText}. `) : null,
+            el("a", { class: "link small", href: `receipt.html#${no}` }, "Open receipt ", icon("right")))));
+        toast(`@${tag} has been paid`);
+        clear();
+      };
+      const depositUnits = BigInt(p.cents) * 10_000n; // what the payer sent, to tell this transfer from others in the tx
       while (!stopped && Date.now() < until) {
         if (document.visibilityState === "visible") {
           try {
-            const { deposits } = await loadTagLedger({ tag, owner: p.owner, sinceSec: p.since ?? entry.since, rate: P.rate });
+            // 1. the agent's own record of this deposit: "paid" and "refused" are final and exact
+            const ev = depositStatus(await agentStatus({ tx: p.hash }), p.hash, { kind: "ntag", tag, amount: depositUnits });
             if (stopped) return;
-            const d = deposits.find((x) => String(x.hash).toLowerCase() === p.hash.toLowerCase());
-            if (d?.status === "paid") {
-              const no = receiptNo(d.payout.hash);
-              const got = Number(d.payout.units) / 1e6;
-              set("agent", "done", "Converted on Textile FX and sent.");
-              set("paid", "done", "");
-              status.replaceChildren(el("div", { class: "nt-paid" }, el("span", { class: "nt-paid-icon" }, icon("check")),
-                el("div", {}, el("b", {}, `Paid · ${no}`),
-                  el("span", { class: "small soft" }, `@${tag} got ${buy === TOKENS.cNGN ? naira(got) + " in cNGN" : num2.format(got) + " USD₮"}. `),
-                  el("a", { class: "link small", href: `receipt.html#${no}` }, "Open receipt ", icon("right")))));
-              toast(`@${tag} has been paid`);
+            if (ev?.status === "paid") {
+              setSource(true);
+              showPaid(ev.receiptNo, paidText(ev));
+              return;
+            }
+            if (ev?.status === "refused") {
+              setSource(true);
+              set("agent", "err", "Not paid.");
+              status.replaceChildren(alertBox("warn", "alert", el("p", {}, el("b", {}, `${reasonText(ev.reason)}, so the agent didn't pay it. `), REFUND_NOTE)));
               clear();
               return;
             }
-            if (d?.status === "ineligible") {
-              const over = d.reason.kind === "over" || d.reason.kind === "day";
-              set("agent", "err", over ? "Above the limit — not paid automatically." : `${d.reason.text} — not paid.`);
-              status.replaceChildren(alertBox("warn", "alert", el("p", {}, el("b", {}, `${d.reason.text}. `),
-                over ? `The agent's limits are ${LIMITS_TEXT}. ` : "", REFUSED_NOTE, " Your payment stays with the agent.")));
-              clear();
-              return;
-            }
-            if (d?.status === "maybe") {
-              const key = d.payout.hash;
-              if (noted !== key) {
-                noted = key;
-                status.replaceChildren(alertBox("", "info", el("p", {}, `A payout to @${tag} was sent at ${watTime(d.payout.ts)}; it may be for another payment. `,
-                  el("a", { class: "link", href: `receipt.html#${receiptNo(d.payout.hash)}` }, "Open that receipt ", icon("right")))));
+            // 2. "received", "failed" or no record: read the chain as before; a payout found there wins
+            try {
+              const { deposits } = await loadTagLedger({ tag, owner: p.owner, sinceSec: p.since ?? entry.since, rate: P.rate });
+              if (stopped) return;
+              const d = deposits.find((x) => String(x.hash).toLowerCase() === p.hash.toLowerCase());
+              if (d?.status === "paid") {
+                setSource(false);
+                const got = Number(d.payout.units) / 1e6;
+                showPaid(receiptNo(d.payout.hash), buy === TOKENS.cNGN ? naira(got) + " in cNGN" : num2.format(got) + " USD₮");
+                return;
               }
+              // the chain's guesses about refusals only count when the agent has no record of this deposit
+              if (!ev && d?.status === "ineligible") {
+                setSource(false);
+                const over = d.reason.kind === "over" || d.reason.kind === "day";
+                set("agent", "err", over ? "Above the limit — not paid automatically." : `${d.reason.text} — not paid.`);
+                status.replaceChildren(alertBox("warn", "alert", el("p", {}, el("b", {}, `${d.reason.text}. `),
+                  over ? `The agent's limits are ${LIMITS_TEXT}. ` : "", REFUSED_NOTE, " Your payment stays with the agent.")));
+                clear();
+                return;
+              }
+              if (!ev && d?.status === "maybe") {
+                setSource(false);
+                const key = d.payout.hash;
+                if (noted !== key) {
+                  noted = key;
+                  status.replaceChildren(alertBox("", "info", el("p", {}, `A payout to @${tag} was sent at ${watTime(d.payout.ts)}; it may be for another payment. `,
+                    el("a", { class: "link", href: `receipt.html#${receiptNo(d.payout.hash)}` }, "Open that receipt ", icon("right")))));
+                }
+              }
+            } catch { /* explorer hiccup: try again next round */ }
+            // 3. what the agent says while no payout is visible
+            if (ev?.status === "failed") {
+              setSource(true);
+              set("agent", "active", DELAYED_NOTE);
+              status.replaceChildren(alertBox("warn", "alert", el("p", {}, el("b", {}, DELAYED_NOTE), " Your payment is safe with the agent and is paid once the owner retries it.")));
+            } else if (ev?.status === "received") {
+              setSource(true);
+              set("agent", "active", receivedStale(ev)
+                ? `${SLOW_NOTE} The agent recorded your payment at ${watTime(Date.parse(ev.at))} but hasn't reported the payout yet.`
+                : `The agent has your payment and is paying @${tag} now.`);
             }
-          } catch { /* explorer hiccup: try again next round */ }
+          } catch { /* never let the tracker die: try again next round */ }
         }
         await sleep(PAYOUT_POLL_MS);
       }

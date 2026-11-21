@@ -5,6 +5,10 @@ import {
   rpc, readContract, loadReceipt, encodeCall, tagSuffix, markWalletConnected, walletDisconnected, isNetworkError,
 } from "../assets/core.js";
 import { ensureCelo, explainWalletError } from "../assets/session.js";
+import {
+  agentStatus, depositStatus, allowanceFromStatus, globalFromStatus, receivedStale, statusFinal, reasonText, sourceNote, REFUND_NOTE,
+  DELAYED_NOTE, SLOW_NOTE,
+} from "../assets/ntag-ui.js";
 
 initChrome();
 
@@ -267,7 +271,12 @@ function initLink(req) {
 
   // state: the deposit and payout found on chain, if any
   // regs: every registration sent to the agent (#tx= links only), to apply the same-amount rule
-  const state = { deposit: null, payout: null, error: false, checkedAt: null, regs: null };
+  // agent: the agent's own record of the deposit from the status server (exact), or null (then the chain is read)
+  const state = { deposit: null, payout: null, error: false, checkedAt: null, regs: null, agent: null };
+  const refused = () => state.agent?.status === "refused";
+  // what the agent says while no payout is known: "failed" (delayed), "received" (paying now, or slow when old)
+  const agentWaiting = () => (state.payout ? null : state.agent?.status === "failed" ? "failed"
+    : state.agent?.status === "received" ? (receivedStale(state.agent) ? "slow" : "paying") : null);
   let timer = null, busy = false;
   const expired = () => Date.now() >= req.exp;
   const regStatusAt = (sec) => registrationStatuses(state.regs, sec).get(req.id);
@@ -309,6 +318,7 @@ function initLink(req) {
     // header badge
     let b;
     if (state.payout) b = badge("", "ok"), b.append(el("span", { class: "dot" }), "Paid out");
+    else if (refused()) b = badge("Not paid", "err");
     else if (selfPaid()) b = badge("Won't be paid out", "err");
     else if (state.deposit) b = badge("", "ok"), b.append(el("span", { class: "dot" }), "Payment received");
     else if (expired()) b = badge("Expired", "err");
@@ -336,10 +346,11 @@ function initLink(req) {
     if (state.payout) {
       const href = isReg ? `receipt.html#p=${state.payout.hash}` : `receipt.html#p=${state.payout.hash}&r=${req.id}`;
       pay.replaceChildren(el("a", { class: "link", href, title: receiptNo(state.payout.hash) }, "View receipt ", icon("right")));
-    } else if (selfPaid()) {
+    } else if (refused() || selfPaid()) {
       setText(pay, "Not paid");
     } else if (state.deposit) {
-      setText(pay, "In progress");
+      const w = agentWaiting();
+      setText(pay, w === "failed" ? "Delayed" : w === "slow" ? "Taking longer than usual" : w === "paying" ? "Paying now" : "In progress");
     } else if (state.checkedAt || state.error) {
       setText(pay, expired() || inUse ? "—" : "After payment");
     }
@@ -357,13 +368,24 @@ function initLink(req) {
       msg.replaceChildren(el("p", { class: "small muted mt-16" }, isReg
         ? `${req.name} has been paid to ${short(req.recipient)}, the wallet that registered this link. The receipt rebuilds the payout from the chain.`
         : `${req.name} has been paid. The receipt rebuilds the payout from the chain.`));
+    } else if (refused()) {
+      msg.replaceChildren(el("div", { class: "alert err mt-16" }, icon("alert"),
+        el("span", {}, el("b", {}, `${reasonText(state.agent.reason)}, so the agent didn't pay it. `), REFUND_NOTE)));
     } else if (selfPaid()) {
       msg.replaceChildren(el("div", { class: "alert err mt-16" }, icon("alert"),
         el("span", {}, `This payment came from ${short(req.recipient)}, the same wallet the link pays. The agent doesn't pay a link from its own recipient, so it won't be paid out. `,
           el("a", { class: "link", href: "verify.html" }, "Look up a transaction"), " for details.")));
+    } else if (state.deposit && agentWaiting() === "failed") {
+      msg.replaceChildren(el("div", { class: "alert warn mt-16" }, icon("alert"),
+        el("span", {}, el("b", {}, DELAYED_NOTE), " Don't send it again: the payment is safe with the agent and is paid once the owner retries it.")));
     } else if (state.deposit) {
+      const w = agentWaiting();
       msg.replaceChildren(el("div", { class: "alert mt-16" }, icon("check"),
-        el("span", {}, "Payment received. Don't send it again. Autopilot converts it and pays out on its next pass, usually within a few minutes while it is running.")));
+        el("span", {}, w === "paying"
+          ? `Payment received. Don't send it again. The agent has recorded it and is paying ${req.name} now.`
+          : w === "slow"
+            ? `Payment received. Don't send it again. ${SLOW_NOTE} The agent recorded it but hasn't reported the payout yet.`
+            : "Payment received. Don't send it again. Autopilot converts it and pays out on its next pass, usually within a few minutes while it is running.")));
     } else if (expired()) {
       msg.replaceChildren(el("div", { class: "alert err mt-16" }, icon("alert"),
         el("span", {}, `This link expired on ${lagosTime(req.exp)} WAT. Don't send money to it: the agent no longer matches deposits for it. Ask for a new link.`)));
@@ -372,6 +394,8 @@ function initLink(req) {
     } else if (state.checkedAt) {
       msg.replaceChildren(el("p", { class: "small muted mt-16" }, "Checks the chain every 10 seconds while this tab is open. A payment shows here a few seconds after it confirms."));
     } else msg.replaceChildren();
+    // where the payout status comes from, once there is a deposit to report on
+    if (state.deposit && !state.error) msg.append(el("p", { class: "micro muted mt-8" }, sourceNote(Boolean(state.agent) && !state.payoutFromChain, "nt-source")));
   }
 
   function tickCountdown() {
@@ -395,7 +419,18 @@ function initLink(req) {
         const accept = isReg ? (t) => regStatusAt(Math.floor(t.ts / 1000)) === "active" : () => true;
         state.deposit = await findDeposit(sell.address, units, req.created, req.exp, accept);
       }
-      if (state.deposit && !state.payout && !selfPaid()) state.payout = await findPayout(buy.address, state.deposit, isReg ? req.recipient : null);
+      if (state.deposit && !state.payout && !selfPaid()) {
+        // the agent's own record: "paid" / "refused" are final. For "received", "failed" or no record, look for the payout
+        // on the chain as before; one found there wins.
+        const ev = depositStatus(await agentStatus({ tx: state.deposit.hash }), state.deposit.hash,
+          { logIndex: state.deposit.logIndex, kind: isReg ? "registration" : "request", amount: req.amount });
+        state.agent = ev;
+        if (ev?.status === "paid") state.payout = { hash: ev.payoutTx, exact: true };
+        else if (!statusFinal(ev)) {
+          state.payout = await findPayout(buy.address, state.deposit, isReg ? req.recipient : null);
+          state.payoutFromChain = Boolean(state.payout);
+        }
+      }
       state.error = false;
       state.checkedAt = Date.now();
     } catch {
@@ -408,7 +443,7 @@ function initLink(req) {
   }
   function schedule() {
     clearTimeout(timer);
-    if (state.payout || selfPaid()) return; // done
+    if (state.payout || selfPaid() || refused()) return; // done
     if (expired() && !state.deposit && state.checkedAt) return; // nothing more can happen
     timer = setTimeout(check, POLL_MS);
   }
@@ -433,23 +468,40 @@ function initLink(req) {
     };
     const since = Date.now() - 24 * 3600_000;
     try {
-      let overall = 0;
-      for await (const t of transfers("from", null, since)) {
-        if (!sameAddr(t.from?.hash, AGENT) || sameAddr(t.to?.hash, AGENT) || t.method !== "transfer") continue;
-        overall += valueOf(t);
-      }
-      let person = null;
-      if (isReg) {
-        person = 0;
-        for await (const t of addressTransfers(req.recipient, "to", since)) if (sameAddr(t.from?.hash, AGENT)) person += valueOf(t);
-      }
+      // Both sources: the agent's totals (only when fresh) and its transfers on the chain. The LARGER amount used wins
+      // (the smaller room); the numbers are exact only when the agent's figure is that larger one.
+      const a = await agentStatus(isReg ? { recipient: req.recipient } : {}).catch(() => null);
+      const sAll = globalFromStatus(a)?.usedUsd ?? null;
+      const sPerson = isReg ? allowanceFromStatus(a)?.usedUsd ?? null : null;
+      let cAll = null, cPerson = null;
+      try {
+        let o = 0;
+        for await (const t of transfers("from", null, since)) {
+          if (!sameAddr(t.from?.hash, AGENT) || sameAddr(t.to?.hash, AGENT) || t.method !== "transfer") continue;
+          o += valueOf(t);
+        }
+        let p = null;
+        if (isReg) {
+          p = 0;
+          for await (const t of addressTransfers(req.recipient, "to", since)) if (sameAddr(t.from?.hash, AGENT)) p += valueOf(t);
+        }
+        cAll = o; cPerson = p;
+      } catch { cAll = null; cPerson = null; }
+      const pick = (s, c) => (s == null ? (c == null ? null : { used: c, exact: false }) : c == null ? { used: s, exact: false } : { used: Math.max(s, c), exact: s >= c - 0.005 });
+      const all = pick(sAll, cAll);
+      const per = isReg ? pick(sPerson, cPerson) : null;
+      if (!all || (isReg && !per)) throw new Error("no totals");
+      const overall = Math.max(0, all.used);
+      const person = per ? Math.max(0, per.used) : null;
+      const exact = all.exact && (!per || per.exact);
       const roomAll = Math.max(0, DAILY_CAP - overall);
       const room = person === null ? roomAll : Math.max(0, Math.min(WALLET_DAILY_CAP - person, roomAll));
       const fmt = (n) => { const v = Math.floor(n * 100) / 100; return Number.isInteger(v) ? `$${v}` : usd(v); };
+      const about = exact ? "" : "about ";
       const line = person === null
-        ? `The agent can pay out about ${fmt(room)} more today, across everyone.`
-        : `${req.name} can receive about ${fmt(room)} more today.`;
-      const kids = [el("p", { class: "hint mt-8" }, line, " Limits count the last 24 hours.")];
+        ? `The agent can pay out ${about}${fmt(room)} more today, across everyone.`
+        : `${req.name} can receive ${about}${fmt(room)} more today.`;
+      const kids = [el("p", { class: "hint mt-8" }, line, " Limits count the last 24 hours. ", sourceNote(exact))];
       if (payUsd != null && payUsd > room + 0.005) {
         const personOver = person !== null && payUsd > WALLET_DAILY_CAP - person + 0.005;
         kids.push(el("div", { class: "alert warn mt-8" }, icon("alert"), el("span", {}, el("b", {}, `This payment (about ${fmt(payUsd)}) would go over today's limit. `),
@@ -674,7 +726,7 @@ async function findDeposit(tokenAddr, units, created, exp, accept = () => true) 
     if (!accept(t)) continue;
     found = t; // newest first, so the last match is the earliest
   }
-  return found && { hash: found.transaction_hash, from: found.from?.hash, ts: found.ts, block: found.block_number };
+  return found && { hash: found.transaction_hash, from: found.from?.hash, ts: found.ts, block: found.block_number, logIndex: found.log_index ?? null };
 }
 
 /**

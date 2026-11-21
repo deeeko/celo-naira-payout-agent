@@ -14,3 +14,5 @@ registrations-state.json
 .vercel
 .env*
 ntag-payments.json
+status-outbox*
+status-secret

@@ -24,11 +24,13 @@
 //   node src/agent.mjs ntag-data @ada 10 [--token usdt|cngn]    the to/data to pay a tag from YOUR OWN wallet (no key used)
 //   node src/agent.mjs register --repo <url>                   ERC-8004 identity (DRY RUN unless --execute)
 //   node src/agent.mjs verify <txHash>                          show the attribution tag on a transaction
+//   node src/agent.mjs status-sync [--backfill]                 send queued reports to the site's status server
+//                                                               (--backfill: re-send every saved deposit record too)
 import { createPublicClient, erc20Abi, formatUnits, http, isAddress, parseUnits } from "viem";
 import { verifyTx } from "@celo/attribution-tags";
 import {
   AGENT_ADDRESS, ATTRIBUTION_CODE, CELO_MIN_USDT, CHAIN, DEFAULT_CORRIDOR, MAX_DAILY_USD, MAX_USD, MAX_WALLET_DAILY_USD,
-  MIN_CELO_RESERVE, SITE_URL, TOKENS,
+  MIN_CELO_RESERVE, SITE_URL, STATUS_OUTBOX_FILE, STATUS_URL, TOKENS,
 } from "./config.mjs";
 import { keygen, loadAccount, makeClients } from "./chain.mjs";
 import { assertRecipient, dailyUsedUnits, getCorridor, getPayCorridor, parseAmount, resolveContact } from "./guards.mjs";
@@ -46,6 +48,7 @@ import {
   ownerOf, refusedRetryBlocker, resolveNtags, saveNtagPayments, verifyNtagOpOnchain,
 } from "./ntags.mjs";
 import { NTAG_MIN, NTAG_MIN_USD, ntagUsdFloor, watch } from "./watch.mjs";
+import { directEvent, eventsFromRecords, isDirectReceipt, makeStatusReporter, retryPaidEvent } from "./status-report.mjs";
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (n) => { const i = rest.indexOf(`--${n}`); return i >= 0 ? rest[i + 1] : undefined; };
@@ -102,6 +105,29 @@ function updateTarget(kind, id, fn) {
   fn(k.get(s, id));
   k.save(s);
 }
+
+/**
+ * After a payout made from this command line: tell the site's status server (best effort, a few seconds at most; the
+ * payout is already done and nothing here can change it). Whatever isn't sent stays queued for autopilot.
+ */
+async function reportAfterPayout(events) {
+  try {
+    const list = [].concat(events ?? []).filter(Boolean);
+    if (!list.length) return;
+    const rep = makeStatusReporter({ quiet: true, say: (m) => console.log(m) });
+    if (!rep.enabled) return;
+    // send directly (this command may be running next to autopilot); only what isn't accepted waits in the outbox
+    const { queued } = await rep.sendNow(list);
+    if (queued) console.log(`Status server: ${queued} report(s) wait in the outbox; autopilot or status-sync sends them.`);
+    await rep.close({ waitMs: 2_000 });
+  } catch { /* reporting never affects a payout */ }
+}
+/** Direct payouts this command just made, read back from receipts.jsonl by payout hash. */
+const directEventsFor = (res) => {
+  const h = String(res?.hashes?.payout ?? "").toLowerCase();
+  if (!h) return [];
+  return readReceipts().filter((e) => String(e?.hashes?.payout ?? "").toLowerCase() === h && isDirectReceipt(e, agentAddress())).map(directEvent);
+};
 
 async function main() {
   switch (cmd) {
@@ -165,10 +191,12 @@ async function main() {
         const { entry, op } = await resolveOwner(tag);
         const { from } = await verifyNtagOpOnchain(readClient(), op, agent);
         console.log(`@${tag} belongs to ${from}${entry.name ? ` (${entry.name})` : ""}; claim ${op.hash} checks out onchain.`);
-        await pay({ to: `@${tag}`, amount, corridor: c.id, recipientAddress: from, payer: agent, execute: has("execute"), yes: has("yes"), ntag: tag });
+        const res = await pay({ to: `@${tag}`, amount, corridor: c.id, recipientAddress: from, payer: agent, execute: has("execute"), yes: has("yes"), ntag: tag });
+        await reportAfterPayout(directEventsFor(res));
         break;
       }
-      await pay({ to: flag("to"), amount: flag("amount"), corridor: payCorridorFlag().id, execute: has("execute"), yes: has("yes") });
+      const res = await pay({ to: flag("to"), amount: flag("amount"), corridor: payCorridorFlag().id, execute: has("execute"), yes: has("yes") });
+      await reportAfterPayout(directEventsFor(res));
       break;
     }
     case "ask": {
@@ -179,7 +207,8 @@ async function main() {
       const { contacts } = loadContacts();
       const intent = await parseIntent(text, [...contacts.keys()]);
       console.log(`Understood: pay ${intent.amount} USD to "${intent.to}"`);
-      await pay({ to: intent.to, amount: intent.amount, execute: has("execute"), yes: has("yes") });
+      const res = await pay({ to: intent.to, amount: intent.amount, execute: has("execute"), yes: has("yes") });
+      await reportAfterPayout(directEventsFor(res));
       break;
     }
     case "request": {
@@ -309,6 +338,7 @@ async function main() {
         delete done.retrying;
       });
       console.log(`${what[0].toUpperCase()}${what.slice(1)} ${id} is paid.`);
+      await reportAfterPayout([retryPaidEvent(kind, target(kind, id), res, readReceipts())]);
       break;
     }
     case "registrations": {
@@ -431,6 +461,36 @@ async function main() {
       console.log("Nothing was sent. This command never asks for a key.");
       break;
     }
+    case "status-sync": {
+      // Sends what is waiting in the status outbox to the site's /api/status. --backfill first queues an event for every
+      // saved record (requests.json, registrations-state.json, ntag-payments.json, receipts.jsonl) from the last 30 days.
+      const rep = makeStatusReporter({ say: (m) => console.log(m) });
+      if (!rep.enabled) { process.exitCode = 1; break; }
+      console.log(`Status server: ${STATUS_URL}`);
+      const check = await rep.ping();
+      if (!check.ok) {
+        console.log(`The status server did not accept a signed check (${check.error}). Nothing was sent; queued reports stay in ${STATUS_OUTBOX_FILE}.`);
+        process.exitCode = 1;
+        break;
+      }
+      console.log("Signed check accepted (the secret and this PC's clock are fine).");
+      if (has("backfill")) {
+        const events = eventsFromRecords({
+          requests: loadRequests(), registrations: loadRegState(), ntagPayments: loadNtagPayments(), receipts: readReceipts(),
+          agent: agentAddress(), sinceMs: Date.now() - 30 * 86_400_000,
+        });
+        console.log(`Queued ${rep.report(events)} report(s) from the saved records of the last 30 days.`);
+      } else {
+        // like autopilot on start: anything from the last 48 h the server hasn't confirmed yet
+        const n = rep.syncRecords({ requests: loadRequests(), registrations: loadRegState(), ntagPayments: loadNtagPayments(), receipts: readReceipts() }, { agent: agentAddress() });
+        if (n) console.log(`Queued ${n} report(s) from the last 48 hours that the server hadn't confirmed.`);
+      }
+      const r = await rep.flush();
+      if (r.left) console.log(`Sent ${r.sent}; ${r.left} still waiting (${r.error}). They are sent the next time autopilot runs or you run status-sync.`);
+      else console.log(r.sent ? `Sent ${r.sent} report(s). Nothing is waiting.` : "Nothing was waiting to be sent.");
+      await rep.close({ waitMs: 0 });
+      break;
+    }
     case "watch":
       await watch({ execute: has("execute"), interval: flag("interval") ?? 15 });
       break;
@@ -445,9 +505,14 @@ async function main() {
       break;
     }
     default:
-      console.log("Commands: keygen | status | quote | pay | ask | request | requests | registrations | ntag | ntags | ntag-data | watch | retry | register | verify  (see README)");
+      console.log("Commands: keygen | status | quote | pay | ask | request | requests | registrations | ntag | ntags | ntag-data | watch | retry | status-sync | register | verify  (see README)");
       console.log("  nTags: ntag <@tag|address> · ntags · pay @tag <amount> [--corridor ID] [--execute] · ntag-data @tag <amount> [--token usdt|cngn] · retry --ntag TX:LOGINDEX [--force-refused]");
       console.log("  In PowerShell quote the tag ('@ada') or leave out the @ (ntag ada, pay --ntag ada --amount 5).");
+      console.log("  Status server: autopilot (watch --execute) reports each deposit's status (paid, refused, received) and the day's");
+      console.log("    totals to the site's /api/status, so pay pages show exact facts instead of estimates from Celo. Set up once:");
+      console.log("    put the shared secret in NP_STATUS_SECRET or in the file status-secret next to the agent key (the same value");
+      console.log("    as the site's NP_STATUS_SECRET). Reports wait in status-outbox.jsonl and are sent in the background; they never");
+      console.log("    block or change a payout. status-sync sends what is waiting; status-sync --backfill re-sends every saved record.");
       process.exitCode = cmd ? 1 : 0;
   }
 }

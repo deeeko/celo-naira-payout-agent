@@ -3,7 +3,7 @@
 // The top level stays free of window/document access so the pure helpers can be tested in Node.
 import {
   el, icon, short, ntagUrl, normalizeNtag, ntagError, ntagAvailability, resolveNtags, ownerOf, loadNtagOps, loadReceipt,
-  lagos, AGENT, TOKENS, CAP, EXPLORER_API, getJson, rpc, ntagOpFromItem, decodeNtagMemo, celoscanTx,
+  lagos, AGENT, TOKENS, CAP, EXPLORER_API, getJson, rpc, ntagOpFromItem, decodeNtagMemo, celoscanTx, HAS_API, timeoutSignal,
 } from "./core.js";
 import { avatar } from "./session.js";
 
@@ -226,6 +226,165 @@ export function allowanceResetAt(alw, needUsd) {
   }
   return alw.payouts.length ? alw.payouts[alw.payouts.length - 1].ts + DAY_MS : null;
 }
+
+// ---------- the agent's status server (/api/status, on Vercel only) ----------
+// Autopilot reports what it did with each deposit (paid with a receipt, refused with a reason, failed and waiting for
+// the owner, or received and paying now) and the day's totals. Pages use it carefully:
+//   - a deposit's "paid" / "refused" is final and exact; for "received", "failed" or no record they still read the
+//     chain, and a payout found there wins;
+//   - "room today" is never taken from the server alone: the page also reads the chain and uses the SMALLER room. The
+//     server's numbers count only when they are fresh (updated in the last 5 minutes);
+//   - anything odd (not on Vercel, 503, a network error, a malformed answer) means null: the page reads the chain as before.
+export const STATUS_SOURCE = { agent: "Live status from the agent", chain: "Estimated from Celo" };
+export const REFUND_NOTE = "Your payment stays with the agent. Contact the agent's owner for a refund.";
+export const DELAYED_NOTE = "Payout delayed — the agent's owner has been alerted.";
+export const SLOW_NOTE = "Taking longer than usual.";
+export const STATUS_FRESH_MS = 5 * 60_000; // server totals older than this are ignored
+export const RECEIVED_STALE_MS = 15 * 60_000; // a "received" older than this is treated as unknown
+const STATUS_RANK = { received: 0, failed: 1, refused: 2, paid: 3 };
+const has = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k); // not Object.hasOwn: older phones
+const finite = (v) => typeof v === "number" && Number.isFinite(v);
+const REASON_TEXT = {
+  unknown_tag: "Nobody held this nTag when the payment arrived",
+  bad_memo: "The @tag note on the payment couldn't be read",
+  token_not_accepted: "This token isn't accepted for nTag payments",
+  below_minimum: "The payment was below the minimum",
+  over_payment_cap: `The payment was over the $${CAP} limit for one payment`,
+  over_wallet_cap: `It would have taken this person over $${LIMITS.perPersonDay} in 24 hours`,
+  self_payment: "It was sent from the same wallet it pays",
+  recipient_blocked: "The agent can't pay this wallet",
+  claim_invalid: "The nTag's claim didn't check out on Celo",
+  registration_invalid: "The payment link didn't check out on Celo",
+  other: "The agent couldn't pay it automatically",
+};
+/** A refusal reason code from the status server, in plain words. */
+export const reasonText = (code) => (has(REASON_TEXT, code) ? REASON_TEXT[code] : REASON_TEXT.other);
+
+const totalsOk = (t) => t && typeof t === "object" && finite(t.usedUsd) && finite(t.roomUsd) && finite(t.capUsd) && t.capUsd > 0;
+const eventOk = (e) => e && typeof e === "object" && typeof e.depositTx === "string" && typeof e.status === "string"
+  && has(STATUS_RANK, e.status) && typeof e.at === "string" && (e.id === undefined || typeof e.id === "string");
+/** True when a 200 answer has the shape the pages rely on. */
+export function statusShapeOk(d) {
+  if (!d || typeof d !== "object" || d.ok !== true || d.source !== "agent" || !totalsOk(d.global)) return false;
+  if (d.updatedAt != null && typeof d.updatedAt !== "string") return false;
+  if (d.events !== undefined && !(Array.isArray(d.events) && d.events.every((e) => e && typeof e === "object"))) return false;
+  if (d.wallet != null) {
+    if (!totalsOk(d.wallet) || (d.wallet.payouts !== undefined && !Array.isArray(d.wallet.payouts))) return false;
+    if ((d.wallet.payouts ?? []).some((p) => !p || typeof p.at !== "string" || !finite(p.usd))) return false;
+  }
+  return true;
+}
+
+/**
+ * Asks the agent's status server. params: { tx } | { recipient } | { tag } | {} (today's overall total). Resolves the
+ * answer, or null whenever it can't help: callers then read the chain exactly as before. opts.force/fetchImpl: tests.
+ */
+export async function agentStatus(params = {}, { fetchImpl = globalThis.fetch, force = false, base = "/api/status", ms = 6000 } = {}) {
+  if ((!HAS_API && !force) || typeof fetchImpl !== "function") return null;
+  try {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== "")).toString();
+    const r = await fetchImpl(qs ? `${base}?${qs}` : base, { headers: { accept: "application/json" }, signal: timeoutSignal(ms) });
+    if (!r || r.status !== 200) return null;
+    const d = await r.json();
+    if (!statusShapeOk(d)) return null;
+    // keep only well-formed events, so callers never trip over a bad one
+    return Array.isArray(d.events) ? { ...d, events: d.events.filter(eventOk) } : d;
+  } catch {
+    return null;
+  }
+}
+/** True when the server's totals were updated within STATUS_FRESH_MS of `nowMs`. */
+export function statusFresh(answer, nowMs = Date.now(), maxAgeMs = STATUS_FRESH_MS) {
+  const t = Date.parse(answer?.updatedAt ?? "");
+  return Number.isFinite(t) && nowMs - t <= maxAgeMs && t - nowMs <= 60_000;
+}
+
+/**
+ * This deposit's event in a ?tx= answer (the furthest along), or null. A transaction can hold several transfers, so it
+ * matches on the full id "<tx>:<logIndex>" when the log index is known; otherwise on what is known of the deposit:
+ * match = { logIndex, kind, tag, registration, amount (decimal string or 6-dp units) }.
+ */
+export function depositStatus(answer, hash, match = {}) {
+  const h = String(hash ?? "").toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(h) || !Array.isArray(answer?.events)) return null;
+  const units = match.amount == null ? null : typeof match.amount === "bigint" ? match.amount : units6Of(match.amount);
+  const list = answer.events.filter((e) => {
+    if (!eventOk(e) || e.depositTx !== h) return false;
+    if (match.logIndex != null) return e.id === `${h}:${Number(match.logIndex)}`;
+    if (match.kind && e.kind !== match.kind) return false;
+    if (match.tag && e.tag !== match.tag) return false;
+    if (match.registration && String(e.registration ?? "") !== String(match.registration).toLowerCase()) return false;
+    if (units != null && units6Of(e.amount) !== units) return false;
+    return true;
+  });
+  list.sort((a, b) => STATUS_RANK[b.status] - STATUS_RANK[a.status]);
+  return list[0] ?? null;
+}
+/** A "received" so old that the payout should have happened: show it as unknown ("taking longer than usual"). */
+export const receivedStale = (ev, nowMs = Date.now()) => ev?.status === "received" && !(nowMs - Date.parse(ev.at) < RECEIVED_STALE_MS);
+/** A status that is final: no chain check can change it ("paid" with a receipt, or "refused"). */
+export const statusFinal = (ev) => ev?.status === "paid" || ev?.status === "refused";
+
+const clampRoom = (v, cap) => Math.min(cap, Math.max(0, v));
+/**
+ * The server's allowance in the shape allowanceFrom returns, from a ?recipient= or ?tag= answer, or null when there is
+ * none or it is stale (older than STATUS_FRESH_MS). Rooms are clamped to [0, cap]. globalLeftUsd: what the agent can
+ * still pay out today across everyone.
+ */
+export function allowanceFromStatus(answer, { nowMs = Date.now() } = {}) {
+  const w = answer?.wallet, g = answer?.global;
+  if (!totalsOk(w) || !totalsOk(g) || !statusFresh(answer, nowMs)) return null;
+  const payouts = (Array.isArray(w.payouts) ? w.payouts : []).map((p) => ({ ts: Date.parse(p?.at), usd: Number(p?.usd) || 0 }))
+    .filter((p) => Number.isFinite(p.ts));
+  payouts.sort((a, b) => a.ts - b.ts);
+  const used = Math.max(0, w.usedUsd);
+  return {
+    usedUsd: used, leftUsd: clampRoom(Math.min(w.roomUsd, w.capUsd - used), w.capUsd), capUsd: w.capUsd, payouts,
+    globalLeftUsd: clampRoom(g.roomUsd, g.capUsd), source: "agent",
+  };
+}
+/** Overall room from a global answer when fresh: { usedUsd, leftUsd, capUsd } or null. */
+export function globalFromStatus(answer, { nowMs = Date.now() } = {}) {
+  const g = answer?.global;
+  if (!totalsOk(g) || !statusFresh(answer, nowMs)) return null;
+  const used = Math.max(0, g.usedUsd);
+  return { usedUsd: used, leftUsd: clampRoom(Math.min(g.roomUsd, g.capUsd - used), g.capUsd), capUsd: g.capUsd };
+}
+/**
+ * Room today from the server (allowanceFromStatus / globalFromStatus, or null) and from the chain (allowanceFrom, or
+ * null when it couldn't be read). Uses the LARGER amount used, so the SMALLER room. exact (drop "about") only when both
+ * were read and they agree, or the server is the stricter of the two. Returns null when neither is known.
+ */
+export function combineAllowance(server, chain) {
+  const chainOk = chain && !chain.error && finite(chain.usedUsd);
+  if (!server && !chainOk) return null;
+  if (!server) return { ...chain, leftUsd: clampRoom(chain.leftUsd, chain.capUsd), exact: false, source: "chain" };
+  if (!chainOk) return { ...server, exact: false, source: "agent" };
+  const cap = Math.min(server.capUsd, chain.capUsd);
+  const serverStricter = server.usedUsd >= chain.usedUsd - 0.005;
+  const agree = Math.abs(server.usedUsd - chain.usedUsd) < 0.01;
+  const used = Math.max(server.usedUsd, chain.usedUsd);
+  const out = {
+    usedUsd: used, leftUsd: clampRoom(cap - used, cap), capUsd: cap,
+    payouts: serverStricter ? server.payouts ?? chain.payouts : chain.payouts ?? server.payouts,
+    exact: agree || serverStricter, source: serverStricter ? "agent" : "chain",
+  };
+  if (finite(server.globalLeftUsd)) out.globalLeftUsd = server.globalLeftUsd;
+  return out;
+}
+/** What a paid event says the recipient got, e.g. "₦14,400.00 in cNGN" or "10.00 USD₮", or null. */
+export function paidText(ev) {
+  const n = Number(ev?.paidAmount);
+  if (!ev?.paidAmount || !Number.isFinite(n)) return null;
+  return ev.paidToken === "cNGN" ? `₦${n.toLocaleString("en-NG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} in cNGN` : `${n.toFixed(2)} USD₮`;
+}
+/** Deposit amount (decimal string) -> 6-decimal base units, or 0n. */
+export function units6Of(amount) {
+  const m = /^(\d+)(?:\.(\d{1,18}))?$/.exec(String(amount ?? ""));
+  return m ? BigInt(m[1]) * 1_000_000n + BigInt(((m[2] ?? "") + "000000").slice(0, 6)) : 0n;
+}
+/** The small "where this status comes from" line. */
+export const sourceNote = (fromAgent, cls = "micro muted nt-source") => el("span", { class: cls }, fromAgent ? STATUS_SOURCE.agent : STATUS_SOURCE.chain);
 
 // ---------- the ring mark ----------
 export function ringMark(cls = "ntag-ring") {

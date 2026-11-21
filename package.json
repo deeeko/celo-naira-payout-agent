@@ -20,5 +20,8 @@
   },
   "bin": {
     "ntag": "src/ntag.mjs"
+  },
+  "devDependencies": {
+    "@vercel/blob": "2.8.2"
   }
 }

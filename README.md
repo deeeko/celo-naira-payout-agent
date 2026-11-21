@@ -181,7 +181,37 @@ node src/agent.mjs pay --to ada --amount 20 --corridor celo-cngn --execute  # re
 `src/ntag.mjs` lets anyone pay an nTag from **their own wallet** in a terminal. It never touches the agent's key and
 refuses to use it.
 
-**Setup**
+#### Install the ntag command (Windows)
+
+The quickest way, for anyone: open PowerShell (no admin needed) and paste
+
+```powershell
+irm https://naira-payout.vercel.app/install.ps1 | iex
+```
+
+Requirement: **Node.js 20 or newer**. If it is missing or too old, the installer says how to get it
+(`winget install OpenJS.NodeJS.LTS` or https://nodejs.org) and stops; it never installs system software itself.
+You can read [`site/install.ps1`](site/install.ps1) (served as plain text at the URL above) before running it. It:
+
+1. checks for Node.js 20+ and npm;
+2. downloads the code as a zip from GitHub (`codeload.github.com/deeeko/celo-naira-payout-agent/zip/<ref>`, `main`
+   unless `$env:NTAG_REF` names a branch, tag or commit), over TLS 1.2 in Windows PowerShell 5.1 too;
+3. runs `npm ci --omit=dev --ignore-scripts --no-audit --no-fund` in a staging folder and checks that `ntag help` runs;
+4. swaps it into `%LOCALAPPDATA%\naira-payout\app` with a rename (a failed update keeps the previous install);
+5. writes `%LOCALAPPDATA%\naira-payout\bin\ntag.cmd` and adds that folder to your **user** PATH (and to the current
+   window). `$env:NTAG_NO_PATH = "1"` skips the PATH change and prints the folder to add instead.
+
+Then: `ntag wallet new`, send USD₮ and a little CELO (for fees) to the address `ntag wallet` shows, `ntag whois ada`,
+`ntag send ada 10`. Written for both Windows PowerShell 5.1 (built into Windows) and PowerShell 7.
+
+- **Update:** run the same line again.
+- **Uninstall:** `$env:NTAG_UNINSTALL = "1"; irm https://naira-payout.vercel.app/install.ps1 | iex` removes the app
+  and bin folders and the PATH entry. By hand: delete both folders and remove the bin folder from your user PATH.
+- **Your wallet is separate:** `%USERPROFILE%\.naira-payout\wallet.json` (or `NTAG_WALLET_FILE`). The installer never
+  creates, reads, moves or deletes it, so updates and uninstalls keep it. Back it up, for example
+  `Copy-Item $HOME\.naira-payout\wallet.json D:\backup\`, and remember the send password.
+
+**Setup** (from a checkout of this repo, any OS)
 
 ```powershell
 cd celo-naira-payout-agent
@@ -312,6 +342,28 @@ Rules that hold for all three:
 
 Operator requests add a random 0.01–0.99 to the amount so it is unique among open requests (and still within the
 per-payment cap), and avoid the amounts of active "Get paid" links.
+
+---
+
+### Status server (exact payout status on the site)
+
+Autopilot reports what it did with each deposit to the site's `/api/status`: **paid** (with its receipt number),
+**refused** (with a reason code), or **received** and being paid now, plus the owner's direct payouts. The site then
+shows exact facts and today's exact room under the limits, marked "Live status from the agent". Whenever the status
+server is unavailable or has no record, the site estimates from the Celo chain as before, marked "Estimated from Celo".
+
+- **Only public facts are stored:** addresses, transaction hashes, amounts, the tag and the receipt number, plus each
+  deposit's status and a refusal reason code. They live in one private Vercel Blob (`status/summary.json`) for 30 days.
+- **Only the agent can write.** Reports are signed with a shared secret (HMAC-SHA256 over the timestamp and the exact
+  body, valid for 5 minutes, timing-safe check). The secret is set in the site's `NP_STATUS_SECRET` and on the agent's
+  PC (`NP_STATUS_SECRET` or the file `status-secret` next to the agent key), never in the repo. Without it, reporting
+  is simply off.
+- **It can never affect a payout.** Reports are appended to `status-outbox.jsonl` and sent in the background with
+  retries; a failing or slow status server never blocks, delays or changes what autopilot pays. A payout that fails is reported as "failed" and shown as "Payout delayed".
+- **One read per request.** `GET /api/status?tx=…`, `?recipient=…` or `?tag=…` reads the summary once and is cached
+  at the edge for 10 seconds. The site always uses the stricter of the agent's fresh totals and the chain for "room today", so a stale report can never let a payer send over a limit.
+- `node src/agent.mjs status-sync` checks the setup and sends anything waiting; `--backfill` re-sends every saved
+  record from the last 30 days (run it once after the first deploy).
 
 ---
 
@@ -522,15 +574,18 @@ All optional (see `.env.example`).
 | `NTAG_PASSWORD`, `NTAG_OLD_PASSWORD` | not set | Answer the `ntag` password prompts in scripts (less safe) |
 | `NTAG_PRIVATE_KEY` | not set | Key for `ntag wallet import` instead of the hidden prompt |
 | `NTAG_WAIT_MINUTES` | `30` | How long `ntag send --wait` waits for the payout |
+| `NP_STATUS_SECRET` | not set | Shared secret that signs status reports (or the file `status-secret` next to the agent key) |
+| `STATUS_URL` | `<SITE_URL>/api/status` | Where autopilot reports payout status |
+| `STATUS_OUTBOX_FILE` | `status-outbox.jsonl` | Queue of reports waiting to be sent |
 
 State files (`contacts.json`, `receipts.jsonl`, `requests.json`, `watch-state.json`, `registrations-state.json`,
-`ntag-payments.json`), `.env*` and key files are git-ignored. Textile quotes need no API key; a signed proof of wallet
+`ntag-payments.json`, `status-outbox.jsonl`), `.env*` and key files are git-ignored. Textile quotes need no API key; a signed proof of wallet
 control (no funds moved) is sent only if Textile asks for it.
 
 ### Tests
 
 ```powershell
-npm test                          # 131 tests, all passing
+npm test                          # 162 tests, all passing
 node scripts/check-site.mjs       # static site check
 ```
 
@@ -548,6 +603,9 @@ node scripts/check-site.mjs       # static site check
 | `test/ntag-ui.test.mjs` | 12 | tag input, live rules, availability, suggestions, limits, deposit eligibility, payout tracking, daily allowance |
 | `test/session-api.test.mjs` | 7 | the sign-in check: hosts, chain, expiry, body limits, contract wallets |
 | `test/site-helpers.test.mjs` | 5 | the limits line matches `src/config.mjs` on every page, rate age, network errors, decimal-comma amounts |
+| `test/status-api.test.mjs` | 14 | the status server: signatures, replay window, body limits, strict validation, merge rules, totals, 503 fallback |
+| `test/status-report.test.mjs` | 12 | autopilot's reporter: outbox, batching, backoff, never throws into a payout, backfill |
+| `test/status-site.test.mjs` | 5 | the site's status helpers: exact vs estimated, reason text, allowance from the server |
 | `test/vercel-api.test.mjs` | 4 | the explorer proxy: allowed paths, refusals, methods, rewrites |
 
 ---
@@ -558,6 +616,9 @@ Newest first.
 
 ### 2026-11-22: nTags, wallet sign-in, the `ntag` CLI and a safety pass
 
+- **Status server.** Autopilot now reports every deposit it handles (paid with receipt, refused with reason,
+  received) to a signed `/api/status` on Vercel, backed by a private Blob. The tag page, account page and payment
+  links show exact status and exact room under the daily limits, and fall back to chain estimates if it is down.
 - **nTags protocol.** Handles tied to a wallet, claimed and released with zero-value `NT1:` transactions to the agent;
   paid with an `NTP:` memo on an ordinary token transfer. One resolver, shared byte-for-byte by the site and the agent
   and cross-checked by tests.
@@ -574,6 +635,9 @@ Newest first.
   including smart-contract wallets.
 - **The `ntag` PowerShell CLI.** `wallet new/import/password`, `whois`, `send` (`--dollars`, `--wait`, `--dry-run`),
   `claim`, `release`, `status`; the key encrypted with a send password (scrypt + AES-256-GCM) and a lockout.
+- **One-line Windows installer.** `irm https://naira-payout.vercel.app/install.ps1 | iex` installs `ntag` for the
+  current user in about a minute: Node.js 20+ check, GitHub zip pinned by `NTAG_REF`, `npm ci --ignore-scripts`,
+  atomic swap, user PATH. Run it again to update; `NTAG_UNINSTALL=1` removes it. It never touches the wallet file.
 - **Daily limits on every payment screen.** $25 per payment, $25 per person per day, $100 per day overall, plus how much
   more a tag owner can receive today.
 - **Connect and pay on payment links.** Pay a link straight from a connected wallet, with network and own-wallet checks.
@@ -634,12 +698,14 @@ Newest first.
 
 **Done**
 
-- [x] Agent on Celo mainnet, 131 tests passing
+- [x] Agent on Celo mainnet, 162 tests passing
 - [x] Live Textile price previews for all three corridors
 - [x] ERC-8004 identity registered (agentId 10079)
 - [x] Payment links, Get paid, autopilot, two stablecoin corridors plus CELO, receipts and onchain reviews
 - [x] nTags, wallet sign-in and the `ntag` CLI
 - [x] Live app on Vercel behind a test-gated deploy
+- [x] Status server: exact payout status and daily limits on the site
+- [x] One-line Windows installer for the `ntag` command
 
 **Still to do** (added here only once they have happened)
 
@@ -648,8 +714,13 @@ Newest first.
 
 **Next**
 
-- A small status server on Vercel so the site can show exact payout status and live remaining limits, instead of
-  inferring them from chain data.
+- **Dollar subscriptions paid in naira.** Naira cards are often declined or capped for dollar subscriptions (X Premium,
+  ChatGPT, Canva, app stores). The naira → dollar corridor already converts cNGN to USD₮ on Textile FX; pairing it with
+  a stablecoin-funded virtual card or gift-card partner lets people pay those subscriptions in naira.
+- **Cash-out:** a direct handoff from cNGN to a Nigerian bank account through an off-ramp partner.
+- **MiniPay mini-app:** claim a tag and get paid without leaving MiniPay.
+- **More corridors** as Textile FX adds pairs.
+- **Always-on autopilot** on a hardened server with a separate, low-balance key.
 - A custom domain.
 
 **How it follows the hackathon rules**

@@ -130,6 +130,7 @@
 
       <h2 id="agent">What the agent keeps</h2>
       <p>To actually send money, the agent keeps a few records on its owner's computer (never on this site or in the code): saved recipients (name and wallet), payment requests (including who paid), and a log of payouts for the daily safety limit. They're used only to make the payments people asked for, never sold or shared, and deleted within two years after the project ends.</p>
+      <p>So the site can show exact payment status, the agent also sends a short status note for each payment it handles to this site's <code>/api/status</code>: the transaction ids, wallet addresses, amounts and tag (all already public on Celo), whether it was paid, refused (with a reason code) or is being paid, and the receipt number. Notes are kept for 30 days. When you look up a payment, the page asks <code>/api/status</code> by transaction, wallet or tag; nothing about you as a visitor is stored.</p>
 
       <h2 id="you">Your say</h2>
       <p>Want to see, fix or delete what the agent's owner holds about you? Ask via <a href="https://github.com/deeeko/celo-naira-payout-agent/issues">GitHub issues</a> and we'll sort out a private way to talk. You can also reach Nigeria's data regulator at <a href="https://ndpc.gov.ng">ndpc.gov.ng</a>, or your local one.</p>

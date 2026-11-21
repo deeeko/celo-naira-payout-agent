@@ -1,7 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "npm ci --ignore-scripts",
+  "installCommand": "npm ci --ignore-scripts --include=dev",
   "buildCommand": "node scripts/vercel-build.mjs",
   "outputDirectory": "site",
   "functions": {
@@ -28,6 +28,14 @@
     {
       "source": "/(logo.svg|logo.png|favicon.svg|apple-touch-icon.png|og.png)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400" }]
+    },
+    {
+      "source": "/install.ps1",
+      "headers": [
+        { "key": "Content-Type", "value": "text/plain; charset=utf-8" },
+        { "key": "Content-Disposition", "value": "inline" },
+        { "key": "Cache-Control", "value": "public, max-age=300, must-revalidate" }
+      ]
     },
     {
       "source": "/_spec/(.*)",

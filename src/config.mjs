@@ -77,3 +77,11 @@ export const WATCH_STATE_FILE = process.env.WATCH_STATE_FILE ?? path.join(root, 
 export const REGISTRATIONS_STATE_FILE = process.env.REGISTRATIONS_STATE_FILE ?? path.join(root, "registrations-state.json");
 // nTag payments autopilot has seen (deposits whose transfer memo names a tag), keyed by `${tx}:${logIndex}`.
 export const NTAG_PAYMENTS_FILE = process.env.NTAG_PAYMENTS_FILE ?? path.join(root, "ntag-payments.json");
+
+// Status server (api/status.js on the site): autopilot reports what happened to each deposit, so the site shows exact
+// facts. Reports wait in a local outbox and are sent in the background; reporting never blocks or changes a payout.
+// The signing secret comes from NP_STATUS_SECRET or this file (next to the agent key, never the key file itself).
+// JSON lines: one queued event per line (appended, never rewritten while a payout runs). Next to it: .sent.json, .lock
+export const STATUS_OUTBOX_FILE = process.env.STATUS_OUTBOX_FILE ?? path.join(root, "status-outbox.jsonl");
+export const STATUS_SECRET_FILE = process.env.STATUS_SECRET_FILE ?? path.join(path.dirname(KEY_FILE), "status-secret");
+export const STATUS_URL = (process.env.STATUS_URL ?? `${SITE_URL}/api/status`).replace(/\/+$/, "");
