@@ -7,8 +7,7 @@
     "start": "node src/agent.mjs",
     "quote": "node src/agent.mjs quote",
     "requests": "node src/agent.mjs requests",
-    "watch": "node src/agent.mjs watch",
-    "ntag": "node src/ntag.mjs"
+    "watch": "node src/agent.mjs watch"
   },
   "keywords": [],
   "author": "",
@@ -17,8 +16,5 @@
   "dependencies": {
     "@celo/attribution-tags": "0.5.0",
     "viem": "2.58.2"
-  },
-  "bin": {
-    "ntag": "src/ntag.mjs"
   }
 }

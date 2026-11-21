@@ -11,8 +11,6 @@ const fail = (msg) => errors.push(msg);
 
 const pages = fs.readdirSync(SITE).filter((f) => f.endsWith(".html"));
 if (!pages.includes("index.html")) fail("site/index.html is missing");
-// the nTags pages are linked from every page's sidebar and footer
-for (const p of ["account.html", "tag.html"]) if (!pages.includes(p)) fail(`site/${p} is missing`);
 
 for (const page of pages) {
   const html = fs.readFileSync(path.join(SITE, page), "utf8");
@@ -37,15 +35,6 @@ for (const page of pages) {
     if (!fs.existsSync(path.join(SITE, ref))) fail(`${page}: broken link/asset "${m[1]}"`);
   }
 
-  // every page keeps the same chrome: Account in the sidebar and footer, the user chip slots, the icons they use
-  if (!isFallback) {
-    if (!/<p class="sb-group">Product<\/p>\s*<a href="account\.html" data-label="Account">/.test(html)) fail(`${page}: sidebar is missing the Account link at the top of Product`);
-    if (!/\sid="sb-user"/.test(html)) fail(`${page}: sidebar is missing the user chip slot (id="sb-user")`);
-    if (!/\sid="nav-user"/.test(html)) fail(`${page}: top bar is missing the sign-in button slot (id="nav-user")`);
-    if (!/<h4>Product<\/h4>\s*<ul><li><a href="account\.html">Account<\/a><\/li>/.test(html)) fail(`${page}: footer Product list is missing Account`);
-    for (const id of ["user", "logout", "updown", "copy"]) if (!new RegExp(`<symbol id="i-${id}"`).test(html)) fail(`${page}: icon sprite is missing i-${id} (used by the user menu)`);
-  }
-
   // in-page anchors used by the sidebar/nav (#id) must exist on that page
   for (const m of html.matchAll(/\shref="#([A-Za-z][\w-]*)"/g)) {
     if (!new RegExp(`\\sid="${m[1]}"`).test(html)) fail(`${page}: anchor #${m[1]} has no matching id`);
@@ -53,17 +42,15 @@ for (const page of pages) {
 }
 
 // pages linked from JavaScript (e.g. el("a", { href: "privacy.html" })) must exist too
-const assetScripts = fs.readdirSync(path.join(SITE, "assets")).filter((f) => f.endsWith(".js")).map((f) => "assets/" + f);
-for (const file of [...assetScripts, ...fs.readdirSync(path.join(SITE, "js")).map((f) => "js/" + f)].filter((f) => f.endsWith(".js"))) {
+for (const file of ["assets/core.js", ...fs.readdirSync(path.join(SITE, "js")).map((f) => "js/" + f)].filter((f) => f.endsWith(".js"))) {
   const src = fs.readFileSync(path.join(SITE, file), "utf8");
   for (const m of src.matchAll(/href:\s*["'`]([a-z0-9-]+\.html)/gi)) {
     if (!fs.existsSync(path.join(SITE, m[1]))) fail(`${file}: links to missing page "${m[1]}"`);
   }
 }
 
-// every url() in the stylesheets must exist and be allowed by each page's CSP (fonts were once silently blocked)
-const css = fs.readdirSync(path.join(SITE, "assets")).filter((f) => f.endsWith(".css")).sort()
-  .map((f) => fs.readFileSync(path.join(SITE, "assets", f), "utf8")).join("\n");
+// every url() in the stylesheet must exist and be allowed by each page's CSP (fonts were once silently blocked)
+const css = fs.readFileSync(path.join(SITE, "assets", "styles.css"), "utf8");
 for (const m of css.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)) {
   const ref = m[1];
   if (/^data:/i.test(ref)) { fail(`styles.css: data: URL "${ref.slice(0, 30)}..." is blocked by the CSP`); continue; }

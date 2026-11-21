@@ -91,43 +91,6 @@ node src/agent.mjs retry --registration 0x<hash>     # DRY RUN of a failed regis
 
 Owner requests (`requests.json`, `contacts.json`) work exactly as before.
 
-## nTags: pay someone by a short name (`src/ntags.mjs`, `site/assets/session.js`)
-
-An nTag is a handle like `@ada` tied to one Celo wallet. People pay the tag; the agent pays the wallet that holds it.
-Nothing is stored on a server: tags are zero-value transactions to the agent, and the site and the agent both rebuild
-the list from them with the same code (the block between the `port` markers in `site/assets/core.js` is copied
-byte-for-byte into `src/ntags.mjs`, and `test/ntags.test.mjs` checks both give identical results).
-
-- **Sign in** (`account.html`): connect a wallet and sign a short EIP-4361 style message with `personal_sign`. Free,
-  no gas, no password. The session (`{ address, message, signature, exp }`, 7 days) is kept in the browser's
-  `localStorage` under `np-session`; signing out deletes it and disconnects the wallet. On Vercel, `POST /api/session`
-  checks the signature with viem and that the message is for this site, on Celo, and not expired. It is stateless: no
-  cookies, no database. On GitHub Pages and the local preview there is no server, so the page accepts the signature
-  the wallet returns.
-- **Claim**: a zero-value transaction from the wallet to the agent with input `hex("NT1:" + JSON)` plus the attribution
-  tag. `{"t":"ada"}` or `{"t":"ada","n":"Ada Obi"}` claims; `{"t":""}` releases the sender's tag.
-- **Rules**: 3–20 characters, lowercase letters, numbers and `_`, starting with a letter, no `__`, not ending in `_`;
-  a reserved list (admin, support, celo, naira, …) can't be claimed. Claims are applied in (block, position) order and
-  the first one wins. One tag per wallet: claiming another gives up the old one. A tag given up stays locked for its
-  previous owner for 30 days. Tags and names are public and permanent.
-- **Pay a tag** (`tag.html#ada`, or `/@ada` on Vercel): an ordinary ERC-20 `transfer(agent, amount)` on USD₮ (the owner
-  gets naira) or cNGN (the owner gets dollars) with `hex("NTP:" + tag)` appended after the 68 bytes of calldata. Token
-  contracts ignore the extra bytes. The memo wins: such a deposit is never matched against requests or registrations.
-- **Autopilot**: `watch` resolves the tag as it stood just before the deposit, re-reads the winning claim over RPC, runs
-  the same recipient rules and caps as registrations (payer is not the owner, per-wallet cap, …), records the deposit in
-  `ntag-payments.json` (git-ignored) before paying, then pays the owner's wallet. A tag nobody holds is refused and
-  logged as `refused_deposit`.
-
-```bash
-node src/agent.mjs ntag @ada                     # owner, name, since, claim tx, status (free | taken | locked | ...)
-node src/agent.mjs ntags                         # every tag held right now
-node src/agent.mjs pay @ada 10                   # DRY RUN: owner payout from the agent's own funds (add --execute)
-node src/agent.mjs ntag-data @ada 10 --token usdt  # the to/data to pay a tag from your own wallet; uses no key
-node src/agent.mjs retry --ntag 0x<tx>:<logIndex>  # DRY RUN of a failed nTag payout (add --execute)
-```
-
-In PowerShell, quote the tag (`'@ada'`) or leave out the `@` (`ntag ada`, `pay --ntag ada --amount 10`).
-
 ## Receipt numbers
 
 Every executed payout (`pay`, `watch`, `retry`) prints

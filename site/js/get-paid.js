@@ -3,15 +3,13 @@ import {
   rpc, loadRate, loadReceipt, loadRegistrations, registrationStatuses, encodeRegistration, initChrome,
   disconnectWallet, walletDisconnected, markWalletConnected, DISCONNECT_NOTE_FULL, DISCONNECT_NOTE_PARTIAL, toast,
 } from "../assets/core.js";
-import { ensureCelo as ensureCeloOn, explainWalletError, CELO_CHAIN } from "../assets/session.js";
 
 initChrome();
 
 // A recipient registers their own payment request onchain: a zero-value tx from their wallet to the agent whose
 // calldata is the request (see site/_spec/FEATURES2.md). The page never moves money; the wallet asks before sending.
 
-const explain = explainWalletError;
-const ensureCelo = () => ensureCeloOn(eth);
+const CELO_CHAIN = "0xa4ec"; // 42220
 const MIN_HOURS = 1, MAX_HOURS = 168, DEFAULT_HOURS = 48;
 const USDT_MIN_CENTS = 100, USDT_MAX_CENTS = 2499; // $1 to $24.99
 const POLL_MS = 2500, POLL_TRIES = 72; // about 3 minutes
@@ -309,6 +307,32 @@ function update() {
 }
 
 // ---------- wallet ----------
+function explain(e) {
+  const m = String(e?.data?.message ?? e?.message ?? e ?? "");
+  if (e?.code === 4001 || /user (rejected|denied|cancel)|rejected by user|denied (transaction|request)|cancell?ed/i.test(m)) return "You cancelled in your wallet. Nothing was sent.";
+  if (/insufficient funds|exceeds balance|gas required exceeds/i.test(m)) return "This wallet doesn't have enough CELO for the network fee. Add a few cents of CELO and try again.";
+  if (e?.code === -32002) return "Your wallet already has a request open. Switch to it and finish or cancel that first.";
+  if (e?.code === 4100) return "The wallet hasn't given this page access. Connect again and approve the request.";
+  return `The wallet reported: ${m || "unknown error"}. Try again, and check the wallet is on Celo mainnet.`;
+}
+
+async function ensureCelo() {
+  const id = String(await eth.request({ method: "eth_chainId" })).toLowerCase();
+  if (id === CELO_CHAIN) return;
+  try {
+    await eth.request({ method: "wallet_switchEthereumChain", params: [{ chainId: CELO_CHAIN }] });
+  } catch (e) {
+    const unknown = e?.code === 4902 || e?.data?.originalError?.code === 4902 || /unrecognized|not been added|unknown chain/i.test(String(e?.message));
+    if (!unknown) throw e;
+    await eth.request({ method: "wallet_addEthereumChain", params: [{
+      chainId: CELO_CHAIN, chainName: "Celo", nativeCurrency: { name: "CELO", symbol: "CELO", decimals: 18 },
+      rpcUrls: ["https://forno.celo.org"], blockExplorerUrls: ["https://celoscan.io"],
+    }] });
+  }
+  const now = String(await eth.request({ method: "eth_chainId" })).toLowerCase();
+  if (now !== CELO_CHAIN) throw new Error("The wallet is still on another network. Switch it to Celo and try again.");
+}
+
 async function checkGas() {
   if (!state.account) return;
   const acct = state.account;

@@ -14,104 +14,22 @@
 //     The deposit is recorded in registrations-state.json before paying: one payout per registration.
 //   - A deposit that matches BOTH an owner request and a registration is ambiguous: logged, never paid.
 //   - Deposits are only scanned up to the block Blockscout has indexed, so a fresh registration is never missed.
-//   - nTag payments (src/ntags.mjs): a deposit whose transfer calldata carries an "NTP:<tag>" memo pays the tag's owner
-//     (resolved strictly before the deposit, claim re-read over RPC). The memo wins: such a deposit is NEVER matched
-//     against requests or registrations. Unknown tags and recipients that break the rules are refused (logged, not paid);
-//     caps and prices stop autopilot exactly like registrations. Recorded in ntag-payments.json before paying.
 import fs from "node:fs";
-import { createPublicClient, formatUnits, http, parseAbiItem, parseUnits } from "viem";
+import { createPublicClient, http, parseAbiItem } from "viem";
 import { AGENT_ADDRESS, CHAIN, TOKENS, WATCH_STATE_FILE } from "./config.mjs";
 import { loadAccount } from "./chain.mjs";
-import { getCorridor, refusal } from "./guards.mjs";
+import { getCorridor } from "./guards.mjs";
 import { log, pay, preflight } from "./pay.mjs";
-import { preview } from "./textile.mjs";
 import { formatAmount, loadRequests, matchDeposit, receiptNoLink, requestStatus, saveRequests } from "./requests.mjs";
 import {
   discoverRegistrations, indexedHeight, loadRegState, MAX_REG_HOURS, matchRegistration, registrationWindows, saveRegState,
   verifyRegistrationOnchain,
 } from "./registrations.mjs";
-import {
-  decodeNtagMemo, discoverNtagOps, loadNtagPayments, ownerOf, resolveNtagsBefore, saveNtagPayments, verifyNtagOpOnchain,
-} from "./ntags.mjs";
 
 export const MAX_BLOCK_RANGE = 5000n; // Forno eth_getLogs limit
 const TRANSFER = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 const SYMBOL = { [TOKENS.USDT.address.toLowerCase()]: "USDT", [TOKENS.CNGN.address.toLowerCase()]: "cNGN" };
 const MAX_BACKOFF_MS = 5 * 60_000;
-
-// ---------- nTag payments (pure, unit-tested) ----------
-
-/** Corridor an nTag payment takes, by the token deposited: USDT -> usdt-cngn (owner gets naira), cNGN -> cngn-usdt. */
-export function ntagCorridor(token) {
-  const t = String(token ?? "").toLowerCase();
-  if (t === TOKENS.USDT.address.toLowerCase()) return "usdt-cngn";
-  if (t === TOKENS.CNGN.address.toLowerCase()) return "cngn-usdt";
-  return null;
-}
-
-/**
- * Smallest nTag deposit autopilot considers, in the deposited token. USDT: Textile's ~$1 swap minimum. cNGN: a dust
- * floor well under $1 at any plausible rate; a cNGN deposit must also preview at >= NTAG_MIN_USD (checked live, see
- * ntagUsdFloor). Smaller deposits are refused (logged, not paid), so dust does not stop autopilot with a price error.
- */
-export const NTAG_MIN = { "usdt-cngn": "1", "cngn-usdt": "1000" };
-export const NTAG_MIN_USD = "1";
-
-/**
- * cNGN deposits: a permanent refusal when the live preview says the naira is worth less than NTAG_MIN_USD (the site and
- * the ntag CLI never let a payer send less). No price right now is left to preflight, which stops autopilot as usual.
- */
-export async function ntagUsdFloor(corridor, units, previewImpl = preview) {
-  if (corridor !== "cngn-usdt") return;
-  const pv = await previewImpl(TOKENS.CNGN.address, TOKENS.USDT.address, BigInt(units).toString());
-  if (pv?.status === "preview" && BigInt(pv.buyAmount) < parseUnits(NTAG_MIN_USD, 6)) {
-    throw refusal(`${formatUnits(BigInt(units), 6)} cNGN is worth about ${formatUnits(BigInt(pv.buyAmount), 6)} USD, below the ${NTAG_MIN_USD} USD minimum for nTag payments. Not paid.`);
-  }
-}
-
-/**
- * Deposit base units (6 dp) -> the amount string pay() accepts, rounded DOWN to `places` decimals, plus the dust kept
- * back. pay() takes up to 6 decimals, so by default the whole deposit is paid. Never more than was received.
- */
-export function ntagPayAmount(units, places = 6) {
-  const v = BigInt(units);
-  const step = 10n ** BigInt(6 - Math.min(6, Math.max(0, places)));
-  const paid = v - (v % step);
-  return { amount: formatUnits(paid, 6), units: paid, dust: v - paid };
-}
-
-const word = (h, i) => h.slice(8 + i * 64, 8 + (i + 1) * 64);
-
-/**
- * What autopilot does with a deposit whose calldata carries an nTag memo. Pure: no RPC, no files.
- *   dep = { key, tag, token, value (bigint), payer, tx: { from, to, input }, block, position }
- *   ops = every nTag op discovered this poll; payments = ntag-payments.json (plus dry-run records); agent = agent address.
- * Returns { action: "handled" } | { action: "refuse", reason } |
- *         { action: "pay", tag, entry, op, corridor, amount, units, dust }.
- * The memo's transfer must be the deposit itself (sent to the token, to the agent, same amount, same sender), and the
- * owner is resolved from the ops strictly before the deposit's (block, position).
- */
-export function classifyNtagDeposit(dep, ops, payments, agent) {
-  if (payments?.[dep.key]) return { action: "handled" };
-  const corridor = ntagCorridor(dep.token);
-  if (!corridor) return { action: "refuse", reason: "token not accepted for nTag payments" };
-  const h = String(dep.tx?.input ?? "").toLowerCase().replace(/^0x/, "");
-  let memoValue = null;
-  try { memoValue = BigInt("0x" + word(h, 1)); } catch { /* malformed: refused below */ }
-  if (
-    String(dep.tx?.to ?? "").toLowerCase() !== String(dep.token).toLowerCase()
-    || word(h, 0).slice(24) !== String(agent).toLowerCase().replace(/^0x/, "")
-    || memoValue !== BigInt(dep.value)
-    || String(dep.tx?.from ?? "").toLowerCase() !== String(dep.payer ?? "").toLowerCase()
-  ) return { action: "refuse", reason: "the nTag memo does not match this transfer" };
-  const { amount, units, dust } = ntagPayAmount(dep.value);
-  if (units < parseUnits(NTAG_MIN[corridor], 6)) return { action: "refuse", reason: `below the nTag minimum of ${NTAG_MIN[corridor]}` };
-  const entry = ownerOf(resolveNtagsBefore(ops, dep.block, dep.position), dep.tag);
-  if (!entry) return { action: "refuse", reason: "unknown nTag" };
-  const op = (ops ?? []).find((o) => o.hash === entry.hash);
-  if (!op) return { action: "refuse", reason: "nTag claim not found" };
-  return { action: "pay", tag: dep.tag, entry, op, corridor, amount, units, dust };
-}
 
 /** Inclusive [from, to] block ranges of at most `size` blocks each. */
 export function chunkRanges(from, to, size = MAX_BLOCK_RANGE) {
@@ -163,12 +81,10 @@ export async function watch({ execute = false, interval = 15 } = {}) {
   const state = execute ? loadState() : {};
   const dryMatched = new Map(); // dry run only: request id -> simulated deposit, in memory
   const dryRegMatched = new Map(); // dry run only: registration hash -> simulated deposit, in memory
-  const dryNtag = new Map(); // dry run only: nTag deposit key -> simulated record, in memory
   let regs = []; // "Get paid" registrations, refreshed every poll
-  let ntagOps = []; // every nTag op sent to the agent, refreshed every poll
   const seen = new Set();
   const blockTime = new Map();
-  const txInfo = new Map(); // tx hash -> { from, to, input, index }
+  const txFrom = new Map();
 
   // Ctrl+C: finish the current step, then exit. A second Ctrl+C exits immediately.
   let stopping = false;
@@ -194,12 +110,6 @@ export async function watch({ execute = false, interval = 15 } = {}) {
     return s;
   };
 
-  const ntagPayments = () => {
-    const s = loadNtagPayments();
-    for (const [k, d] of dryNtag) s[k] = { ...(s[k] ?? {}), ...d };
-    return s;
-  };
-
   say(`Watching ${agent} for USDT and cNGN deposits every ${intervalMs / 1000}s. ${execute ? "EXECUTE MODE: matched requests are paid for real." : "DRY RUN: nothing is paid or saved. Add --execute to pay."}`);
   const open = requests().filter((r) => requestStatus(r) === "open");
   say(`${open.length} open request(s)${open.length ? ": " + open.map((r) => `${r.id} ${r.amount} ${getCorridor(r.dir).sellToken.symbol} for ${r.name}`).join(", ") : ". Create one with: node src/agent.mjs request --to NAME --amount N"}`);
@@ -218,27 +128,20 @@ export async function watch({ execute = false, interval = 15 } = {}) {
     if (value === 0n) return;
 
     // Ignore transfers the agent caused itself (e.g. the output of its own swap).
-    if (!txInfo.has(l.transactionHash)) {
-      const t = await pub.getTransaction({ hash: l.transactionHash });
-      txInfo.set(l.transactionHash, { from: t.from, to: t.to, input: t.input, index: t.transactionIndex });
-    }
-    const tx = txInfo.get(l.transactionHash);
-    if (tx.from.toLowerCase() === agent.toLowerCase()) return;
+    if (!txFrom.has(l.transactionHash)) txFrom.set(l.transactionHash, (await pub.getTransaction({ hash: l.transactionHash })).from);
+    if (txFrom.get(l.transactionHash).toLowerCase() === agent.toLowerCase()) return;
 
     if (!blockTime.has(l.blockNumber)) blockTime.set(l.blockNumber, Number((await pub.getBlock({ blockNumber: l.blockNumber })).timestamp) * 1000);
     const timeMs = blockTime.get(l.blockNumber);
     seen.add(key); // only after the RPC lookups succeeded, so a failed lookup is retried, never skipped
-    const amount = formatAmount(value);
     const list = requests();
+    const amount = formatAmount(value);
     const rstate = regState();
     const handled = (d) => d?.tx === l.transactionHash && d?.logIndex === l.logIndex;
     if (list.some((r) => handled(r.deposit)) || Object.values(rstate).some((r) => handled(r.deposit))) {
       say(`Deposit ${l.transactionHash} was already handled. Skipping.`);
       return;
     }
-    // A transfer memo naming an nTag wins: such a deposit is never matched against requests or registrations.
-    const tag = decodeNtagMemo(tx.input);
-    if (tag) return handleNtag(l, tag, { sym, amount, payer, timeMs, tx });
     const req = matchDeposit({ token, value, timeMs }, list);
     const rm = matchRegistration({ token, value, timeMs }, regs, rstate);
     if (req && rm) {
@@ -377,90 +280,6 @@ export async function watch({ execute = false, interval = 15 } = {}) {
     }
   }
 
-  async function handleNtag(l, tag, { sym, amount, payer, timeMs, tx }) {
-    const key = `${l.transactionHash}:${l.logIndex}`.toLowerCase();
-    const deposit = { payer, tx: l.transactionHash, logIndex: l.logIndex, block: String(l.blockNumber), at: new Date(timeMs).toISOString() };
-    const where = { ntag: tag, token: sym, amount, from: payer, tx: l.transactionHash, logIndex: l.logIndex, block: String(l.blockNumber) };
-    const d = classifyNtagDeposit({
-      key, tag, token: l.address, value: l.args.value, payer, tx, block: l.blockNumber, position: l.transactionIndex ?? tx.index,
-    }, ntagOps, ntagPayments(), agent);
-    if (d.action === "handled") {
-      say(`Deposit ${l.transactionHash} for @${tag} was already handled. Skipping.`);
-      return;
-    }
-    if (d.action === "refuse") {
-      say(`Refused deposit ${amount} ${sym} from ${short(payer)} (tx ${l.transactionHash}) for @${tag}: ${d.reason}. NOT paid; the deposit stays in the agent wallet. Continuing.`);
-      if (execute) log({ type: "refused_deposit", reason: d.reason, ...where });
-      return;
-    }
-    const args = { to: `@${tag}`, amount: d.amount, corridor: d.corridor, recipientAddress: d.entry.owner, payer, ntag: tag };
-    say(`nTag payment: ${amount} ${sym} from ${short(payer)} (tx ${l.transactionHash}) -> pay @${tag} (${short(d.entry.owner)}) via ${d.corridor}.`);
-    if (d.dust > 0n) say(`  Paying ${d.amount} ${sym}; ${formatUnits(d.dust, 6)} ${sym} of dust stays in the agent wallet.`);
-    const record = (from) => ({
-      id: key, tag, name: `@${tag}`, from, owner: from, claim: d.entry.hash, ...(d.entry.name ? { ownerName: d.entry.name } : {}),
-      token: sym, amount: d.amount, dir: d.corridor, ...(d.dust > 0n ? { dust: formatUnits(d.dust, 6) } : {}), deposit,
-    });
-
-    if (!execute) {
-      try {
-        await verifyNtagOpOnchain(pub, d.op, agent);
-        await ntagUsdFloor(d.corridor, d.units);
-        await pay({ ...args, execute: false });
-        dryNtag.set(key, record(d.entry.owner));
-      } catch (e) {
-        say(e.permanent
-          ? `DRY RUN: would refuse: ${e.message} With --execute this is logged and autopilot carries on.`
-          : `DRY RUN: pre-flight fails right now: ${e.message}. With --execute the deposit would NOT be recorded and autopilot would stop here.`);
-      }
-      return;
-    }
-
-    // Pre-flight (sends nothing): the winning claim re-read over RPC, recipient rules (not the payer, agent, own wallets,
-    // contracts, zero), per-payout / daily / per-wallet caps and a live preview.
-    let from;
-    try {
-      ({ from } = await verifyNtagOpOnchain(pub, d.op, agent));
-      await ntagUsdFloor(d.corridor, d.units);
-      await preflight({ ...args, recipientAddress: from, agent });
-    } catch (e) {
-      if (e.permanent) {
-        say(`Refused deposit ${l.transactionHash} for @${tag}: ${e.message} The deposit stays in the agent wallet. Continuing.`);
-        log({ type: "refused_deposit", reason: "nTag payment refused", ...where, error: e.message });
-        return;
-      }
-      saveState({ cursor: String(cursor), updatedAt: new Date().toISOString() }); // pin the rescan point before this deposit
-      log({ type: "preflight_failed", ...where, error: e.message });
-      throw new StopError(
-        `Pre-flight failed for the nTag payment to @${tag}: ${e.message}. NOTHING was recorded or paid; the deposit stays in the agent wallet. ` +
-        `Fix the cause, then run "watch --execute" again: it rescans from block ${cursor + 1n} and matches this deposit again. Stopping.`,
-      );
-    }
-
-    // Record the deposit BEFORE paying: one payout per deposit, even if we crash mid-flow.
-    const fresh = loadNtagPayments();
-    if (fresh[key]) { say(`Deposit ${l.transactionHash} for @${tag} was already handled. Skipping.`); return; }
-    fresh[key] = record(from);
-    saveNtagPayments(fresh);
-    try {
-      const res = await pay({ ...args, recipientAddress: from, execute: true, yes: true });
-      const after = loadNtagPayments();
-      Object.assign(after[key], { paidAt: new Date().toISOString(), hashes: res.hashes, receiptUrl: res.receiptUrl, receiptNo: res.receiptNo, paid: res.paid });
-      saveNtagPayments(after);
-      say(`Paid @${tag}. Receipt ${res.receiptNo}: ${receiptNoLink(res.receiptNo)}`);
-      if (res.untagged?.length) throw new StopError(`Payout to @${tag} sent, but ${res.untagged.join(", ")} lack the attribution tag. Stopping to investigate.`);
-    } catch (e) {
-      if (e instanceof StopError) throw e;
-      const after = loadNtagPayments();
-      after[key].error = e.message;
-      if (e.hashes) after[key].hashes = e.hashes;
-      saveNtagPayments(after);
-      throw new StopError(
-        `Payout to @${tag} failed: ${e.message}. The deposit is recorded; it is not retried automatically. ` +
-        `Fix the cause, then "node src/agent.mjs retry --ntag ${key}" (dry run; add --execute to pay). Stopping.`,
-      );
-    }
-  }
-
   try {
     while (!stopping) {
       try {
@@ -471,10 +290,9 @@ export async function watch({ execute = false, interval = 15 } = {}) {
         const from0 = cursor ?? (state.cursor != null ? BigInt(state.cursor) : latest);
         const sinceSec = Math.floor(Date.now() / 1000) - Number(latest > from0 ? latest - from0 : 0n) - (MAX_REG_HOURS + 24) * 3600;
         regs = await discoverRegistrations({ agent, sinceSec });
-        ntagOps = await discoverNtagOps({ agent }); // all of them, every poll: tags are permanent
         if (cursor == null) {
           cursor = state.cursor != null ? BigInt(state.cursor) : initialFromBlock(latest, [...requests(), ...registrationWindows(regs)]) - 1n;
-          say(`Scanning from block ${cursor + 1n} (latest ${latest}). ${regs.length} "Get paid" registration(s) and ${ntagOps.length} nTag op(s) found.`);
+          say(`Scanning from block ${cursor + 1n} (latest ${latest}). ${regs.length} "Get paid" registration(s) found.`);
         }
         const head = indexed < latest ? indexed : latest;
         const chunks = chunkRanges(cursor + 1n, head);
